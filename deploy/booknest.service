@@ -1,0 +1,46 @@
+[Unit]
+Description=BookNest 书巢 · 个人藏书管理
+Documentation=https://github.com/your/booknest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=booknest
+Group=booknest
+WorkingDirectory=/opt/booknest
+
+# —— 基本端口 ——
+Environment=HOST=0.0.0.0
+Environment=PORT=8787
+Environment=HTTP_PORT=8788
+
+# —— 访问密码（云端部署务必设置！改掉下面的值）——
+Environment=BOOKNEST_PASSWORD=change-me-please
+
+# —— 封面 OCR：Linux 上走 tesseract；不设则自动探测 ——
+# Environment=BOOKNEST_OCR=tesseract
+# Environment=BOOKNEST_TESSERACT_LANGS=chi_sim
+# Environment=BOOKNEST_TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
+
+# —— 服务器在中国大陆时，用它代理访问 Google Books / Open Library ——
+# Environment=BOOKNEST_PROXY=http://127.0.0.1:7890
+
+# —— 数据目录可自定义（默认 <项目>/data）——
+# Environment=BOOKNEST_DATA=/var/lib/booknest
+
+ExecStart=/usr/bin/node /opt/booknest/server/server.js
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=booknest
+
+# 轻量加固（数据目录需要可写）
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/booknest/data /var/lib/booknest
+
+[Install]
+WantedBy=multi-user.target

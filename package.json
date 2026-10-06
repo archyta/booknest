@@ -1,0 +1,15 @@
+{
+  "name": "booknest",
+  "version": "1.0.0",
+  "private": true,
+  "description": "书巢 BookNest —— 扫码/扫封面录入个人藏书，自动抓取封面·简介·评分·出版信息，支持自动分类、彩色标签、主题书单与相关推荐（零第三方依赖）",
+  "keywords": ["books", "isbn", "barcode", "ocr", "pwa", "self-hosted", "douban"],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "./start.sh",
+    "stop": "./stop.sh",
+    "serve": "node server/server.js"
+  }
+}

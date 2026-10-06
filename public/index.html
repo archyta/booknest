@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#2563eb">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="书巢">
+<title>书巢 BookNest · 我的藏书</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+  <header id="topbar">
+    <div class="topbar-row">
+      <h1 class="brand">📚 书巢 <small id="shelfCount"></small></h1>
+      <div class="spacer"></div>
+      <button class="icon-btn" id="btnViewMode" title="切换网格 / 列表">▦</button>
+    </div>
+    <div class="searchbox">
+      <svg viewBox="0 0 24 24"><path d="M10 2a8 8 0 105.29 14.01l4.35 4.35 1.41-1.41-4.35-4.35A8 8 0 0010 2zm0 2a6 6 0 110 12 6 6 0 010-12z"/></svg>
+      <input id="searchInput" type="search" placeholder="搜索书名 / 作者 / 出版社 / ISBN / 标签" autocomplete="off">
+      <button id="searchClear" class="hidden" aria-label="清空">✕</button>
+    </div>
+    <div class="chips" id="statusChips"></div>
+    <div class="filter-row">
+      <select id="filterCategory"><option value="">全部分类</option></select>
+      <select id="filterTag"><option value="">全部标签</option></select>
+      <select id="sortBy">
+        <option value="added-desc">最近添加</option>
+        <option value="updated-desc">最近更新</option>
+        <option value="title-asc">书名 A→Z</option>
+        <option value="author-asc">作者 A→Z</option>
+        <option value="rating-desc">评分高→低</option>
+        <option value="pubdate-desc">出版时间新→旧</option>
+      </select>
+    </div>
+  </header>
+
+  <main id="view"></main>
+
+  <nav id="tabbar">
+    <button data-tab="shelf" class="active">
+      <svg viewBox="0 0 24 24"><path d="M4 3h13a2 2 0 012 2v16l-8.5-4.2L2 21V5a2 2 0 012-2z"/></svg><span class="lbl">书架</span>
+    </button>
+    <button data-tab="lists">
+      <svg viewBox="0 0 24 24"><path d="M3 5h2v2H3V5zm4 0h14v2H7V5zM3 11h2v2H3v-2zm4 0h14v2H7v-2zM3 17h2v2H3v-2zm4 0h14v2H7v-2z"/></svg><span class="lbl">书单</span>
+    </button>
+    <button data-tab="scan" class="primary">
+      <span class="bubble"><svg viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 012-2h2V1H5a4 4 0 00-4 4v2h2zm0 10H1v2a4 4 0 004 4h2v-2H5a2 2 0 01-2-2v-2zm16 2a2 2 0 01-2 2h-2v2h2a4 4 0 004-4v-2h-2v2zm2-14a4 4 0 00-4-4h-2v2h2a2 2 0 012 2v2h2V5zM3 11h18v2H3z"/></svg></span><span class="lbl">扫码</span>
+    </button>
+    <button data-tab="manage">
+      <svg viewBox="0 0 24 24"><path d="M3 5h12v2H3V5zm0 6h12v2H3v-2zm0 6h8v2H3v-2zm16.5-1.5L21 17l-4 4-2.5-2.5 1.4-1.4.9.9 2.3-2.3z"/></svg><span class="lbl">管理</span>
+    </button>
+    <button data-tab="stats">
+      <svg viewBox="0 0 24 24"><path d="M4 20h3V10H4v10zm6.5 0h3V4h-3v16zM17 20h3v-7h-3v7z"/></svg><span class="lbl">统计</span>
+    </button>
+    <button data-tab="settings">
+      <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9.4 4l2.3 1.8-2.3 4-2.8-.9a7.6 7.6 0 01-1.6.9l-.5 2.9h-4.6l-.5-2.9a7.6 7.6 0 01-1.6-.9l-2.8.9-2.3-4L3 12l-2.3-1.8 2.3-4 2.8.9c.5-.35 1-.66 1.6-.9l.5-2.9h4.6l.5 2.9c.56.24 1.1.55 1.6.9l2.8-.9 2.3 4L21.4 12z"/></svg><span class="lbl">设置</span>
+    </button>
+  </nav>
+</div>
+
+<div class="backdrop" id="backdrop"></div>
+
+<!-- 扫码录入 -->
+<section class="sheet" id="sheetScan">
+  <div class="sheet-head">
+    <h2>扫码录入</h2>
+    <button data-close>完成</button>
+  </div>
+  <div class="sheet-body">
+    <div class="scan-stage">
+      <video id="scanVideo" playsinline muted autoplay></video>
+      <div class="scan-frame"><span class="laser"></span></div>
+      <div class="scan-hint" id="scanHint">把书背面条形码放进框内，识别成功会自动获取书籍信息</div>
+    </div>
+    <div class="scan-controls">
+      <button id="btnCamStart">▶︎ 启动摄像头</button>
+      <button id="btnTorch">💡 补光</button>
+      <button id="btnSwitchCam">🔄 切换镜头</button>
+    </div>
+    <div class="scan-section">
+      <div class="field-row">
+        <button class="btn ghost" id="btnPhoto" style="flex:1">📷 拍照识别条码</button>
+        <button class="btn ghost" id="btnKeyboard" style="flex:1">⌨️ 扫码枪 / 手输</button>
+      </div>
+      <input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden">
+    </div>
+    <div class="scan-section">
+      <button class="btn block ghost" id="btnCoverScan">📖 没有条码？扫封面识别</button>
+      <div class="scan-hint-text">拍下封面 → 本地识别书名 → 列出可能的书目让你确认（适合老书、无条码书、外文书）</div>
+      <input type="file" id="coverInput" accept="image/*" capture="environment" class="hidden">
+    </div>
+    <div class="scan-section" id="manualSection">
+      <div class="manual-row">
+        <input id="manualIsbn" inputmode="numeric" placeholder="输入 ISBN（可带横杠）">
+        <button class="btn sm" id="btnManualIsbn">查询</button>
+      </div>
+      <div class="manual-row">
+        <input id="titleQuery" placeholder="没有条码？按书名搜索">
+        <button class="btn sm ghost" id="btnTitleSearch">搜索</button>
+      </div>
+      <div class="search-results" id="searchResults"></div>
+    </div>
+    <div class="scan-section">
+      <div class="section-head" style="margin-bottom:8px">
+        <h3>本次已扫</h3><span class="hint" id="scanSessionHint">识别后可直接保存，连续扫描无需退出</span>
+      </div>
+      <div id="recentScans" class="search-results"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 确认 / 编辑录入 -->
+<section class="sheet" id="sheetBook">
+  <div class="sheet-head">
+    <h2 id="bookSheetTitle">书籍信息</h2>
+    <button data-close>关闭</button>
+  </div>
+  <div class="sheet-body" id="bookSheetBody"></div>
+</section>
+
+<!-- 书单 -->
+<section class="sheet full" id="sheetLists">
+  <div class="sheet-head">
+    <h2 id="listsTitle">我的书单</h2>
+    <button data-close>关闭</button>
+  </div>
+  <div class="sheet-body" id="listsBody"></div>
+</section>
+
+<!-- 作者 / 译者 作品列表 -->
+<section class="sheet full" id="sheetAuthor">
+  <div class="sheet-head">
+    <h2 id="authorTitle">作者作品</h2>
+    <button data-close>关闭</button>
+  </div>
+  <div class="sheet-body" id="authorBody"></div>
+</section>
+
+<!-- 书单加书选择器 -->
+<section class="sheet" id="sheetListPick">
+  <div class="sheet-head">
+    <h2 id="listPickTitle">选择书籍</h2>
+    <button data-close>取消</button>
+  </div>
+  <div class="sheet-body" id="listPickBody"></div>
+</section>
+
+<!-- 封面识别候选确认 -->
+<section class="sheet" id="sheetCover">
+  <div class="sheet-head">
+    <h2>封面识别</h2>
+    <button data-close>关闭</button>
+  </div>
+  <div class="sheet-body" id="coverBody"></div>
+</section>
+
+<!-- 分类标签管理 -->
+<section class="sheet" id="sheetManage">
+  <div class="sheet-head">
+    <h2>分类与标签</h2>
+    <button data-close>关闭</button>
+  </div>
+  <div class="sheet-body" id="manageBody"></div>
+</section>
+
+<!-- 统计 -->
+<section class="sheet" id="sheetStats">
+  <div class="sheet-head">
+    <h2>藏书统计</h2>
+    <button data-close>关闭</button>
+  </div>
+  <div class="sheet-body" id="statsBody"></div>
+</section>
+
+<!-- 设置 -->
+<section class="sheet" id="sheetSettings">
+  <div class="sheet-head">
+    <h2>设置</h2>
+    <button data-close>关闭</button>
+  </div>
+  <div class="sheet-body" id="settingsBody"></div>
+</section>
+
+<div id="lightbox" class="lightbox">
+  <img id="lightboxImg" alt="封面大图">
+  <button class="lightbox-close" id="lightboxClose" aria-label="关闭">✕</button>
+  <div class="lightbox-hint">点图片放大 / 再点还原 · 点空白处关闭</div>
+</div>
+
+<div id="toast"></div>
+<input type="file" id="photoCoverInput" accept="image/*" capture="environment" class="hidden">
+
+<script src="vendor/zxing.min.js"></script>
+<script src="vendor/qrcode.min.js"></script>
+<script src="scanner.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
