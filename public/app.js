@@ -2091,25 +2091,38 @@
           保存后需重启服务生效（终端 Ctrl+C 后重新运行 <code>./start.sh</code>）；启动脚本会自动探测 7890 / 7897 等常见代理端口。
         </div>
         <div class="inline-form" style="margin-top:10px">
-          <input type="text" id="googleKey" placeholder="Google Books API Key（可选）" value="${esc(
-            state.settings.googleBooksApiKey || ''
-          )}">
+          <input type="text" id="googleKey" placeholder="${
+            state.settings.googleBooksApiKeySet ? '已配置（留空则不修改）' : 'Google Books API Key（可选）'
+          }" value="">
           <button class="btn sm" data-action="save-gkey">保存</button>
+          ${
+            state.settings.googleBooksApiKeySet
+              ? '<button class="btn sm ghost" data-action="clear-gkey">清除</button>'
+              : ''
+          }
         </div>
         <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-top:6px">
           Google Books 的匿名配额常被用尽（返回 429）；填一个免费 API Key 后立即生效，可用来补齐海外书目信息。
         </div>
         <div class="inline-form" style="margin-top:10px">
-          <input type="text" id="tmdbKey" placeholder="TMDb API Key（影片，可选）" value="${esc(state.settings.tmdbApiKey || '')}">
+          <input type="text" id="tmdbKey" placeholder="${
+            state.settings.tmdbApiKeySet ? '已配置（留空则不修改）' : 'TMDb API Key（影片，可选）'
+          }" value="">
           <button class="btn sm" data-action="save-tmdb">保存</button>
+          ${state.settings.tmdbApiKeySet ? '<button class="btn sm ghost" data-action="clear-tmdb">清除</button>' : ''}
         </div>
         <div class="inline-form" style="margin-top:8px">
-          <input type="text" id="omdbKey" placeholder="OMDb API Key（IMDb 详情，可选）" value="${esc(state.settings.omdbApiKey || '')}">
+          <input type="text" id="omdbKey" placeholder="${
+            state.settings.omdbApiKeySet ? '已配置（留空则不修改）' : 'OMDb API Key（IMDb 详情，可选）'
+          }" value="">
           <button class="btn sm" data-action="save-omdb">保存</button>
+          ${state.settings.omdbApiKeySet ? '<button class="btn sm ghost" data-action="clear-omdb">清除</button>' : ''}
         </div>
         <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-top:6px">
+          为安全起见，已保存的 Key <b>不会回传到页面</b>（只显示"已配置"）；重新填写即覆盖，点「清除」删除。<br>
           影片默认用豆瓣（中文片最全，无需 Key）+ IMDb 联想接口；填 TMDb Key 可补全海外片详情与推荐，
-          填 OMDb Key 可用 IMDb 数据补全剧情与 IMDb 评分。服务在境内时这两个源需要配合上面的代理。
+          填 OMDb Key 可用 IMDb 数据补全剧情与 IMDb 评分。云端部署可用环境变量
+          <code>BOOKNEST_TMDB_KEY</code> / <code>BOOKNEST_OMDB_KEY</code> 注入，Key 就不会写进数据库。
         </div>
       </div>
       <div class="section">
@@ -3326,8 +3339,12 @@
           renderSettings();
         } else if (action === 'save-gkey') {
           const key = $('#googleKey').value.trim();
+          if (!key && state.settings.googleBooksApiKeySet) {
+            toast('留空表示不修改；要删除请点「清除」');
+            return;
+          }
           const res = await api('/api/settings', { method: 'PATCH', body: { googleBooksApiKey: key } });
-          state.settings.googleBooksApiKey = res.settings.googleBooksApiKey;
+          state.settings.googleBooksApiKeySet = res.settings.googleBooksApiKeySet;
           toast(key ? 'API Key 已保存，正在重新检测数据源…' : '已清除 API Key');
           renderSettings();
           setTimeout(async () => {
@@ -3339,18 +3356,44 @@
               /* 忽略 */
             }
           }, 1200);
+        } else if (action === 'clear-gkey') {
+          if (!window.confirm('删除已保存的 Google Books API Key？')) return;
+          const res = await api('/api/settings', { method: 'PATCH', body: { googleBooksApiKey: '' } });
+          state.settings.googleBooksApiKeySet = res.settings.googleBooksApiKeySet;
+          renderSettings();
+          toast('已清除 Google Books Key');
         } else if (action === 'save-tmdb') {
           const key = $('#tmdbKey').value.trim();
+          if (!key && state.settings.tmdbApiKeySet) {
+            toast('留空表示不修改；要删除请点「清除」');
+            return;
+          }
           const res = await api('/api/settings', { method: 'PATCH', body: { tmdbApiKey: key } });
-          state.settings.tmdbApiKey = res.settings.tmdbApiKey;
+          state.settings.tmdbApiKeySet = res.settings.tmdbApiKeySet;
           toast(key ? 'TMDb Key 已保存，影片搜索会带上 TMDb' : '已清除 TMDb Key');
           renderSettings();
+        } else if (action === 'clear-tmdb') {
+          if (!window.confirm('删除已保存的 TMDb API Key？')) return;
+          const res = await api('/api/settings', { method: 'PATCH', body: { tmdbApiKey: '' } });
+          state.settings.tmdbApiKeySet = res.settings.tmdbApiKeySet;
+          renderSettings();
+          toast('已清除 TMDb Key');
         } else if (action === 'save-omdb') {
           const key = $('#omdbKey').value.trim();
+          if (!key && state.settings.omdbApiKeySet) {
+            toast('留空表示不修改；要删除请点「清除」');
+            return;
+          }
           const res = await api('/api/settings', { method: 'PATCH', body: { omdbApiKey: key } });
-          state.settings.omdbApiKey = res.settings.omdbApiKey;
+          state.settings.omdbApiKeySet = res.settings.omdbApiKeySet;
           toast(key ? 'OMDb Key 已保存，IMDb 影片可补全详情' : '已清除 OMDb Key');
           renderSettings();
+        } else if (action === 'clear-omdb') {
+          if (!window.confirm('删除已保存的 OMDb API Key？')) return;
+          const res = await api('/api/settings', { method: 'PATCH', body: { omdbApiKey: '' } });
+          state.settings.omdbApiKeySet = res.settings.omdbApiKeySet;
+          renderSettings();
+          toast('已清除 OMDb Key');
         } else if (action === 'wipe') {
           if (!window.confirm('⚠️ 将删除全部书籍、分类、标签，且不可恢复。确定继续？')) return;
           if (!window.confirm('再确认一次：真的要清空所有数据吗？')) return;
@@ -3916,7 +3959,7 @@
         <button class="btn" data-action="movie-search-run">${s.busy ? '搜索中…' : '搜索'}</button>
       </div>
       <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-bottom:8px">
-        数据来自 豆瓣 + IMDb${state.settings.tmdbApiKey ? ' + TMDb' : ''}（在设置里可填 TMDb / OMDb Key 以获取更全的海外影片信息）；点一条即抓取详情
+        数据来自 豆瓣 + IMDb${state.settings.tmdbApiKeySet ? ' + TMDb' : ''}（在设置里可填 TMDb / OMDb Key 以获取更全的海外影片信息）；点一条即抓取详情
       </div>
       ${
         s.error

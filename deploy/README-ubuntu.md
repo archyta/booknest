@@ -128,6 +128,9 @@ cd /opt/booknest && sudo -u booknest ./start.sh    # 生成 certs/ 后 Ctrl+C
 | `BOOKNEST_DATA` | `<项目>/data` | 数据目录（db.json + 封面 + 上传） |
 | `BOOKNEST_PASSWORD` | 空 | **云端必设**，设置后所有页面/接口都要登录 |
 | `BOOKNEST_PROXY` | 空 | 海外数据源代理，如 `http://127.0.0.1:7890`（服务器在境外则不需要） |
+| `BOOKNEST_TMDB_KEY` | 空 | TMDb API Key（影片元数据）；**建议用环境变量而不是设置页**，这样 Key 不进数据库文件 |
+| `BOOKNEST_OMDB_KEY` | 空 | OMDb API Key（用 IMDb 数据补全影片详情与评分） |
+| `BOOKNEST_TMDB_LANG` | zh-CN | TMDb 返回语言 |
 | `BOOKNEST_OCR` | auto | `auto` / `vision` / `tesseract` / `none` |
 | `BOOKNEST_TESSERACT_BIN` | 自动查找 | tesseract 可执行文件路径 |
 | `BOOKNEST_TESSERACT_LANGS` | 自动 | 语言，默认 `chi_sim`（实测中文封面最好；需要中英混排可试 `chi_sim+eng`） |

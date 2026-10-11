@@ -263,6 +263,7 @@ function fromTmdbDetail(data, mediaType) {
   const isTv = mediaType === 'tv' || !!data.first_air_date;
   const crew = (data.credits && data.credits.crew) || [];
   const cast = (data.credits && data.credits.cast) || [];
+  const prodCountries = unique((data.production_countries || []).map((c) => clean(c.name)));
   return {
     source: 'tmdb',
     sourceLabel: 'TMDb',
@@ -277,17 +278,12 @@ function fromTmdbDetail(data, mediaType) {
     ).slice(0, 4),
     actors: unique(cast.map((c) => clean(c.name))).slice(0, 20),
     genres: unique((data.genres || []).map((g) => clean(g.name))),
-    countries: unique(
-      ((data.production_countries || []).map((c) => clean(c.name))).concat(
-        (data.origin_country || []).map((c) => clean(c))
-      )
-    ),
+    // 有制片国家就用全称，否则退回 ISO 国家码，避免「美国 / US」这种重复
+    countries: prodCountries.length ? prodCountries : unique((data.origin_country || []).map((c) => clean(c))),
     languages: unique((data.spoken_languages || []).map((l) => clean(l.name))),
     durations: data.runtime ? [`${data.runtime}分钟`] : isTv && data.episode_run_time && data.episode_run_time[0] ? [`${data.episode_run_time[0]}分钟`] : [],
     releaseDates: [data.release_date || data.first_air_date || ''].filter(Boolean),
-    aka: unique((data.alternative_titles && data.alternative_titles.titles) || []).length
-      ? []
-      : [],
+    aka: unique((data.alternative_titles && data.alternative_titles.titles) || []),
     poster: data.poster_path ? TMDB_IMG_ORIG + data.poster_path : '',
     summary: cleanMultiline(data.overview || ''),
     rating: data.vote_average ? Math.round(data.vote_average * 10) / 10 : 0,

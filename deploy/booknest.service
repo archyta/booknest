@@ -18,6 +18,11 @@ Environment=HTTP_PORT=8788
 # —— 访问密码（云端部署务必设置！改掉下面的值）——
 Environment=BOOKNEST_PASSWORD=change-me-please
 
+# —— 影片数据源的 Key（建议用环境变量，不要写进代码或仓库）——
+# Environment=BOOKNEST_TMDB_KEY=你的TMDbKey
+# Environment=BOOKNEST_OMDB_KEY=你的OMDbKey
+# Environment=BOOKNEST_TMDB_LANG=zh-CN
+
 # —— 封面 OCR：Linux 上走 tesseract；不设则自动探测 ——
 # Environment=BOOKNEST_OCR=tesseract
 # Environment=BOOKNEST_TESSERACT_LANGS=chi_sim

@@ -192,6 +192,31 @@ function bookView(book) {
   return book;
 }
 
+/* TMDb Key 优先取设置页保存的值，其次取环境变量（云端建议用环境变量，避免写进数据库） */
+function tmdbKey() {
+  const fromSettings = ((store.getDb().settings || {}).tmdbApiKey || '').trim();
+  return fromSettings || String(process.env.BOOKNEST_TMDB_KEY || '').trim();
+}
+
+function omdbKey() {
+  const fromSettings = ((store.getDb().settings || {}).omdbApiKey || '').trim();
+  return fromSettings || String(process.env.BOOKNEST_OMDB_KEY || '').trim();
+}
+
+/* 对外返回的设置：把 API Key 换成"是否已配置"的布尔值，密钥本身不回传前端 */
+const SECRET_SETTING_KEYS = ['googleBooksApiKey', 'tmdbApiKey', 'omdbApiKey'];
+function publicSettings() {
+  const raw = { ...(store.getDb().settings || {}) };
+  for (const k of SECRET_SETTING_KEYS) {
+    const v = String(raw[k] || '').trim();
+    delete raw[k];
+    raw[`${k}Set`] = !!v;
+  }
+  if (process.env.BOOKNEST_TMDB_KEY) raw.tmdbApiKeySet = true;
+  if (process.env.BOOKNEST_OMDB_KEY) raw.omdbApiKeySet = true;
+  return raw;
+}
+
 async function handleApi(req, res, url) {
   const p = url.pathname;
   const q = url.searchParams;
@@ -215,7 +240,7 @@ async function handleApi(req, res, url) {
       movieStatuses: store.MOVIE_STATUSES,
       stats: store.stats(),
       statuses: store.STATUSES,
-      settings: db.settings || {},
+      settings: publicSettings(),
       providers: providers.healthSnapshot(),
       server: {
         httpsPort: HTTPS_PORT,
@@ -665,8 +690,7 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { ...cached.data, cached: true });
     }
     try {
-      const tmdbKey = (store.getDb().settings || {}).tmdbApiKey || '';
-      const data = await movie.search(keyword, { tmdbKey });
+      const data = await movie.search(keyword, { tmdbKey: tmdbKey() });
       store.cache.set(key, { ts: Date.now(), data });
       return sendJson(res, 200, { ...data, cached: false });
     } catch (err) {
@@ -689,14 +713,13 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { ...cached, cached: true, duplicate: dup || null });
     }
     try {
-      const settings = store.getDb().settings || {};
       const result = await movie.lookup({
         source,
         sourceId,
         title,
         year,
-        tmdbKey: settings.tmdbApiKey || '',
-        omdbKey: settings.omdbApiKey || '',
+        tmdbKey: tmdbKey(),
+        omdbKey: omdbKey(),
       });
       store.cache.set(cacheKey, { ts: Date.now(), record: result.record, sources: result.sources });
       const dup = result.record.sourceId ? store.findMovieBySource(result.record.source, result.record.sourceId) : null;
@@ -763,7 +786,7 @@ async function handleApi(req, res, url) {
         let list = [];
         if (m.source === 'douban' && m.sourceId) list = await movie.doubanRecommendations(m.sourceId, { count: 12 });
         if (!list.length && m.title) {
-          const s = await movie.search(m.title, { tmdbKey: (store.getDb().settings || {}).tmdbApiKey || '' });
+          const s = await movie.search(m.title, { tmdbKey: tmdbKey() });
           list = (s.results || []).map((r) => ({ ...r, reason: '相关影片' }));
         }
         raw = { candidates: list, queries: [m.title] };
@@ -991,7 +1014,7 @@ async function handleApi(req, res, url) {
       providers.checkHealth(true).catch(() => {});
     }
     return sendJson(res, 200, {
-      settings: db.settings,
+      settings: publicSettings(),
       needsRestart,
       proxy: proxyInfo(),
       providers: providers.healthSnapshot(),
