@@ -34,6 +34,21 @@
     author: null,
     lastScan: { code: '', at: 0 },
     busy: false,
+    /* ---- 电影 ---- */
+    mode: localStorage.getItem('bn.mode') || 'book',
+    movies: [],
+    movieLists: [],
+    movieListSorts: {},
+    movieStatuses: {},
+    movieStats: {},
+    movieFilters: { status: '', genre: '', tag: '', q: '', sort: 'added-desc' },
+    movieDraft: null,
+    movieRelated: null,
+    movieSearch: { q: '', results: [], sources: [], busy: false, error: '' },
+    movieListPick: null,
+    movieCurrentListId: '',
+    creatingMovieList: false,
+    newMovieListColor: PALETTE[10],
   };
 
   const $ = (sel, root) => (root || document).querySelector(sel);
@@ -480,6 +495,7 @@
   }
 
   function renderShelf() {
+    if (state.mode === 'movie') return renderMovieShelf();
     const list = filteredBooks();
     const view = $('#view');
     $('#shelfCount').textContent = state.books.length ? `共 ${state.books.length} 本` : '';
@@ -529,6 +545,23 @@
   }
 
   function renderStatusChips() {
+    if (state.mode === 'movie') {
+      const counts = (state.movieStats && state.movieStats.byStatus) || {};
+      const order = ['wish', 'watching', 'watched', 'dropped'];
+      const chips = [
+        `<button class="chip ${state.movieFilters.status === '' ? 'active' : ''}" data-mstatus="">全部 <span class="count">${state.movies.length}</span></button>`,
+      ];
+      for (const key of order) {
+        const st = state.movieStatuses[key] || { label: key, color: '#94a3b8' };
+        chips.push(
+          `<button class="chip ${state.movieFilters.status === key ? 'active' : ''}" data-mstatus="${key}">
+            <span class="dot" style="background:${esc(st.color)}"></span>${esc(st.label)} <span class="count">${counts[key] || 0}</span>
+          </button>`
+        );
+      }
+      $('#statusChips').innerHTML = chips.join('');
+      return;
+    }
     const counts = (state.stats && state.stats.byStatus) || {};
     const chips = [`<button class="chip ${state.filters.status === '' ? 'active' : ''}" data-status="">全部 <span class="count">${state.books.length}</span></button>`];
     for (const key of STATUS_ORDER) {
@@ -546,6 +579,38 @@
   function renderFilterOptions() {
     const catSel = $('#filterCategory');
     const tagSel = $('#filterTag');
+    const sortSel = $('#sortBy');
+    if (state.mode === 'movie') {
+      const genres = (state.movieStats.byGenre || []).map((g) => g.name);
+      catSel.innerHTML =
+        `<option value="">全部类型</option>` + genres.map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('');
+      tagSel.innerHTML =
+        `<option value="">全部标签</option>` + state.tags.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');
+      sortSel.innerHTML = [
+        ['added-desc', '最近添加'],
+        ['added-asc', '最早添加'],
+        ['updated-desc', '最近更新'],
+        ['rating-desc', '评分高→低'],
+        ['myrating-desc', '我的评分高→低'],
+        ['title-asc', '片名 A→Z'],
+        ['director-asc', '导演 A→Z'],
+        ['year-desc', '年份新→旧'],
+        ['year-asc', '年份旧→新'],
+        ['status-asc', '按观看状态'],
+      ]
+        .map(([k, label]) => `<option value="${k}">${label}</option>`)
+        .join('');
+      catSel.value = state.movieFilters.genre;
+      tagSel.value = state.movieFilters.tag;
+      sortSel.value = state.movieFilters.sort;
+      $('#searchInput').value = state.movieFilters.q;
+      $('#searchClear').classList.toggle('hidden', !state.movieFilters.q);
+      $('#searchInput').placeholder = '搜索片名 / 导演 / 演员 / 类型 / 标签';
+      $('.brand').innerHTML = `🎬 片库 <small id="shelfCount"></small>`;
+      return;
+    }
+    $('.brand').innerHTML = `📚 书巢 <small id="shelfCount"></small>`;
+    $('#searchInput').placeholder = '搜索书名 / 作者 / 出版社 / ISBN / 标签';
     catSel.innerHTML =
       `<option value="">全部分类</option><option value="__none__">未分类</option>` +
       state.categories.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
@@ -553,7 +618,7 @@
       `<option value="">全部标签</option>` + state.tags.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');
     catSel.value = state.filters.category;
     tagSel.value = state.filters.tagIds[0] || '';
-    $('#sortBy').value = state.filters.sort;
+    sortSel.value = state.filters.sort;
     $('#searchInput').value = state.filters.q;
     $('#searchClear').classList.toggle('hidden', !state.filters.q);
   }
@@ -562,6 +627,8 @@
     renderStatusChips();
     renderFilterOptions();
     renderShelf();
+    renderMovieListsIfOpen();
+    renderMovieTabLabel();
   }
 
   /* ---------------- 数据 ---------------- */
@@ -578,6 +645,11 @@
     state.settings = data.settings || {};
     state.server = data.server || {};
     state.providers = data.providers || [];
+    state.movies = data.movies || [];
+    state.movieLists = data.movieLists || [];
+    state.movieListSorts = data.movieListSorts || {};
+    state.movieStatuses = data.movieStatuses || {};
+    state.movieStats = data.movieStats || {};
     renderAll();
   }
 
@@ -1528,6 +1600,7 @@
   }
 
   function renderLists() {
+    if (state.mode === 'movie') return renderMovieLists();
     $('#listsTitle').textContent = '我的书单';
     const lists = state.booklists;
     const creating = state.creatingList
@@ -1944,6 +2017,7 @@
   /* ---------------- 统计 ---------------- */
 
   function renderStats() {
+    if (state.mode === 'movie') return renderMovieStats();
     const s = state.stats || {};
     const max = (arr) => Math.max(1, ...arr.map((x) => x.count));
     const byCat = s.byCategory || [];
@@ -2024,6 +2098,18 @@
         </div>
         <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-top:6px">
           Google Books 的匿名配额常被用尽（返回 429）；填一个免费 API Key 后立即生效，可用来补齐海外书目信息。
+        </div>
+        <div class="inline-form" style="margin-top:10px">
+          <input type="text" id="tmdbKey" placeholder="TMDb API Key（影片，可选）" value="${esc(state.settings.tmdbApiKey || '')}">
+          <button class="btn sm" data-action="save-tmdb">保存</button>
+        </div>
+        <div class="inline-form" style="margin-top:8px">
+          <input type="text" id="omdbKey" placeholder="OMDb API Key（IMDb 详情，可选）" value="${esc(state.settings.omdbApiKey || '')}">
+          <button class="btn sm" data-action="save-omdb">保存</button>
+        </div>
+        <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-top:6px">
+          影片默认用豆瓣（中文片最全，无需 Key）+ IMDb 联想接口；填 TMDb Key 可补全海外片详情与推荐，
+          填 OMDb Key 可用 IMDb 数据补全剧情与 IMDb 评分。服务在境内时这两个源需要配合上面的代理。
         </div>
       </div>
       <div class="section">
@@ -2114,6 +2200,9 @@
         else if (sheetId === 'sheetAuthor') state.author = null;
         else if (sheetId === 'sheetCover') state.cover = null;
         else if (sheetId === 'sheetListPick') state.listPick = null;
+        else if (sheetId === 'sheetMovie') state.movieDraft = null;
+        else if (sheetId === 'sheetMovieSearch') state.movieSearch = { q: '', results: [], sources: [], busy: false, error: '' };
+        else if (sheetId === 'sheetMovieListPick') state.movieListPick = null;
       })
     );
 
@@ -2130,6 +2219,10 @@
       closeAllSheets();
       if (tab !== 'shelf') state.draft = null;
       if (tab === 'scan') {
+        if (state.mode === 'movie') {
+          openMovieSearch();
+          return;
+        }
         openSheet('#sheetScan');
         renderSession();
         if (window.BookScanner.isRunning()) window.BookScanner.resume();
@@ -2152,6 +2245,11 @@
 
     // 书架交互
     $('#view').addEventListener('click', (e) => {
+      const movieBtn = e.target.closest('[data-movie]');
+      if (movieBtn) {
+        openMovieSheet(movieBtn.dataset.movie);
+        return;
+      }
       const bookBtn = e.target.closest('[data-book]');
       if (bookBtn) {
         openBookDetail(bookBtn.dataset.book);
@@ -2164,10 +2262,38 @@
       } else if (action.dataset.action === 'clear-filters') {
         state.filters = { status: '', category: '', tag: '', q: '', sort: 'added-desc', tagIds: [] };
         renderAll();
+      } else if (action.dataset.action === 'clear-movie-filters') {
+        state.movieFilters = { status: '', genre: '', tag: '', q: '', sort: 'added-desc' };
+        renderAll();
+      } else if (action.dataset.action === 'open-movie-search') {
+        openMovieSearch();
       }
     });
 
+    // 书 / 影 切换
+    $('#modeSwitch').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-mode]');
+      if (!btn) return;
+      const mode = btn.dataset.mode;
+      if (mode === state.mode) return;
+      state.mode = mode;
+      localStorage.setItem('bn.mode', mode);
+      $$('#modeSwitch button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+      state.movieCurrentListId = '';
+      renderAll();
+      renderLists();
+      renderStats();
+      toast(mode === 'movie' ? '已切到影片' : '已切到书籍');
+    });
+
     $('#statusChips').addEventListener('click', (e) => {
+      const mchip = e.target.closest('[data-mstatus]');
+      if (mchip) {
+        state.movieFilters.status = mchip.dataset.mstatus;
+        renderStatusChips();
+        renderShelf();
+        return;
+      }
       const chip = e.target.closest('[data-status]');
       if (!chip) return;
       state.filters.status = chip.dataset.status;
@@ -2175,14 +2301,29 @@
       renderShelf();
     });
     $('#filterCategory').addEventListener('change', (e) => {
+      if (state.mode === 'movie') {
+        state.movieFilters.genre = e.target.value;
+        renderShelf();
+        return;
+      }
       state.filters.category = e.target.value;
       renderShelf();
     });
     $('#filterTag').addEventListener('change', (e) => {
+      if (state.mode === 'movie') {
+        state.movieFilters.tag = e.target.value;
+        renderShelf();
+        return;
+      }
       state.filters.tagIds = e.target.value ? [e.target.value] : [];
       renderShelf();
     });
     $('#sortBy').addEventListener('change', (e) => {
+      if (state.mode === 'movie') {
+        state.movieFilters.sort = e.target.value;
+        renderShelf();
+        return;
+      }
       state.filters.sort = e.target.value;
       renderShelf();
     });
@@ -2192,18 +2333,354 @@
       $('#searchClear').classList.toggle('hidden', !v);
       clearTimeout(searchTimer);
       searchTimer = setTimeout(() => {
-        state.filters.q = v;
+        if (state.mode === 'movie') state.movieFilters.q = v;
+        else state.filters.q = v;
         renderShelf();
       }, 160);
     });
     $('#searchClear').addEventListener('click', () => {
       $('#searchInput').value = '';
-      state.filters.q = '';
+      if (state.mode === 'movie') state.movieFilters.q = '';
+      else state.filters.q = '';
       $('#searchClear').classList.add('hidden');
       renderShelf();
     });
-    $('#btnViewMode').addEventListener('click', () => {
-      const order = ['grid', 'list', 'group'];
+    /* ---------------- 电影：事件 ---------------- */
+
+    $('#movieSearchBody').addEventListener('click', async (e) => {
+      const pick = e.target.closest('[data-movie-pick]');
+      if (pick) {
+        const [source, sourceId, title, year] = pick.dataset.moviePick.split('|');
+        await pickMovieResult(source, sourceId, title, year);
+        return;
+      }
+      const action = e.target.closest('[data-action]');
+      if (!action) return;
+      if (action.dataset.action === 'movie-search-run') runMovieSearch();
+      else if (action.dataset.action === 'movie-manual') {
+        openMovieSheet({ title: '', source: '', sourceId: '', status: state.movieFilters.status || 'wish' }, { saved: false });
+      }
+    });
+    $('#movieSearchBody').addEventListener('keydown', (e) => {
+      if (e.target.id === 'movieSearchInput' && e.key === 'Enter') {
+        e.preventDefault();
+        runMovieSearch();
+      }
+    });
+    $('#movieSearchBody').addEventListener('input', (e) => {
+      if (e.target.id === 'movieSearchInput') state.movieSearch.q = e.target.value;
+    });
+
+    $('#movieSheetBody').addEventListener('click', async (e) => {
+      const d = state.movieDraft;
+      if (!d) return;
+      const sim = e.target.closest('[data-movie]:not([data-movie-add])');
+      if (sim && !e.target.closest('[data-action]')) {
+        openMovieSheet(sim.dataset.movie);
+        return;
+      }
+      const cand = e.target.closest('[data-movie-add]');
+      if (cand) {
+        const [source, sourceId, title, year] = cand.dataset.movieAdd.split('|');
+        await pickMovieResult(source, sourceId, title, year);
+        return;
+      }
+      const colorBtn = e.target.closest('[data-mcolor]');
+      if (colorBtn) {
+        state.newMovieTagColor = colorBtn.dataset.mcolor;
+        $$('#movieTagPalette button').forEach((b) => b.classList.toggle('on', b.dataset.mcolor === state.newMovieTagColor));
+        return;
+      }
+      const statusBtn = e.target.closest('[data-movie-status]');
+      if (statusBtn) {
+        const key = statusBtn.dataset.movieStatus;
+        if (d.isNew) await saveNewMovie(key);
+        else {
+          await autoSaveMovie({ status: key });
+          renderMovieSheet();
+        }
+        return;
+      }
+      const star = e.target.closest('[data-movie-star]');
+      if (star) {
+        if (d.isNew) {
+          d.movie.myRating = Number(star.dataset.movieStar);
+          renderMovieSheet();
+          return;
+        }
+        const n = Number(star.dataset.movieStar);
+        await autoSaveMovie({ myRating: d.movie.myRating === n ? 0 : n });
+        renderMovieSheet();
+        return;
+      }
+      const tagBtn = e.target.closest('[data-movie-tag]');
+      if (tagBtn) {
+        if (d.isNew) {
+          toast('先加入片库再打标签');
+          return;
+        }
+        const id = tagBtn.dataset.movieTag;
+        const set = new Set(d.movie.tags || []);
+        if (set.has(id)) set.delete(id);
+        else set.add(id);
+        await autoSaveMovie({ tags: [...set] });
+        renderMovieSheet();
+        return;
+      }
+      const listBtn = e.target.closest('[data-movie-list]');
+      if (listBtn) {
+        await toggleMovieInList(listBtn.dataset.movieList);
+        return;
+      }
+      const action = e.target.closest('[data-action]');
+      if (!action) return;
+      const act = action.dataset.action;
+      if (act === 'movie-cancel') {
+        closeSheet('#sheetMovie');
+        state.movieDraft = null;
+      } else if (act === 'movie-save-new') {
+        await saveNewMovie();
+      } else if (act === 'movie-new-tag') {
+        const form = $('#movieNewTagForm');
+        if (form) {
+          form.classList.toggle('hidden');
+          if (!form.classList.contains('hidden')) {
+            const input = $('#movieTagName');
+            if (input) input.focus();
+          }
+        }
+      } else if (act === 'movie-create-tag') {
+        const name = (($('#movieTagName') || {}).value || '').trim();
+        if (!name) {
+          toast('请填写标签名称', 'err');
+          return;
+        }
+        try {
+          const res = await api('/api/tags', {
+            method: 'POST',
+            body: { name, color: state.newMovieTagColor || PALETTE[11] },
+          });
+          await refresh();
+          if (state.movieDraft && !state.movieDraft.isNew) {
+            const set = new Set(state.movieDraft.movie.tags || []);
+            if (res.tag) set.add(res.tag.id);
+            await autoSaveMovie({ tags: [...set] });
+          }
+          renderMovieSheet();
+          toast(`标签「${name}」已创建`);
+        } catch (err) {
+          toast(`创建失败：${err.message}`, 'err');
+        }
+      } else if (act === 'movie-save-note') {
+        const note = ($('#movieNote') || {}).value || '';
+        if (d.isNew) {
+          d.movie.note = note;
+          toast('加入片库后会一并保存');
+          return;
+        }
+        await autoSaveMovie({ note });
+        toast('备注已保存');
+      } else if (act === 'toggle-movie-details') {
+        d.showDetails = d.showDetails === false;
+        const box = $('#movieDetails');
+        if (box) box.classList.toggle('hidden', d.showDetails === false);
+        const head = action.querySelector('span');
+        if (head) head.textContent = `▾ 详细信息${d.showDetails === false ? '（已收起）' : '（可手动修改）'}`;
+      } else if (act === 'movie-refetch') {
+        action.textContent = '抓取中…';
+        try {
+          const res = await api('/api/movie-lookup', {
+            method: 'POST',
+            body: { source: d.movie.source, sourceId: d.movie.sourceId, title: d.movie.title, force: true },
+          });
+          const keep = { status: d.movie.status, myRating: d.movie.myRating, tags: d.movie.tags, note: d.movie.note };
+          const saved = await api(`/api/movies/${encodeURIComponent(d.movie.id)}`, {
+            method: 'PATCH',
+            body: { ...res.record, ...keep },
+          });
+          const idx = state.movies.findIndex((x) => x.id === d.movie.id);
+          if (idx >= 0) state.movies[idx] = saved.movie;
+          d.movie = saved.movie;
+          state.movieRelated = { candidates: (res.record.recommendations || []).slice(0, 12) };
+          renderMovieSheet();
+          toast('信息已更新');
+        } catch (err) {
+          toast(`更新失败：${err.message}`, 'err');
+          renderMovieSheet();
+        }
+      } else if (act === 'movie-delete') {
+        if (!window.confirm(`确定删除《${d.movie.title}》？`)) return;
+        try {
+          await api(`/api/movies/${encodeURIComponent(d.movie.id)}`, { method: 'DELETE' });
+          state.movies = state.movies.filter((x) => x.id !== d.movie.id);
+          state.movieDraft = null;
+          closeSheet('#sheetMovie');
+          await refresh();
+          toast('已删除');
+        } catch (err) {
+          toast(`删除失败：${err.message}`, 'err');
+        }
+      } else if (act === 'movie-related-refresh') {
+        state.movieRelated = null;
+        ensureMovieRelated(true);
+      }
+    });
+
+    $('#movieListPickBody').addEventListener('change', (e) => {
+      const lp = state.movieListPick;
+      if (!lp) return;
+      if (e.target.id === 'movieListPickSort') {
+        lp.sort = e.target.value;
+        localStorage.setItem('bn.movieListPickSort', e.target.value);
+        drawMovieListPicker();
+        return;
+      }
+      if (!e.target.dataset || !e.target.dataset.mpickId) return;
+      const id = e.target.dataset.mpickId;
+      if (e.target.checked) lp.selected.add(id);
+      else lp.selected.delete(id);
+      const c = $('#movieListPickCount');
+      if (c) c.textContent = lp.selected.size;
+    });
+    $('#movieListPickBody').addEventListener('click', async (e) => {
+      const lp = state.movieListPick;
+      if (!lp) return;
+      const act = e.target.closest('[data-act]');
+      if (!act) return;
+      if (act.dataset.act === 'mpick-all') {
+        state.movies.forEach((m) => lp.selected.add(m.id));
+        drawMovieListPicker();
+      } else if (act.dataset.act === 'mpick-none') {
+        lp.selected.clear();
+        drawMovieListPicker();
+      } else if (act.dataset.act === 'mpick-save') {
+        const set = new Set(lp.selected);
+        await applyMovieListPick(set);
+        closeSheet('#sheetMovieListPick');
+        state.movieListPick = null;
+      }
+    });
+    $('#movieListPickBody').addEventListener('input', (e) => {
+      const lp = state.movieListPick;
+      if (!lp || e.target.id !== 'movieListPickSearch') return;
+      lp.query = e.target.value;
+      clearTimeout(lp.timer);
+      lp.timer = setTimeout(() => {
+        drawMovieListPicker();
+        const input = $('#movieListPickSearch');
+        if (input) {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      }, 180);
+    });
+
+    // 片单页交互（电影模式）
+    $('#listsBody').addEventListener('click', async (e) => {
+      if (state.mode !== 'movie') return;
+      const colorBtn = e.target.closest('[data-mlcolor]');
+      if (colorBtn) {
+        state.newMovieListColor = colorBtn.dataset.mlcolor;
+        $$('#movieListPalette button').forEach((b) => b.classList.toggle('on', b.dataset.mlcolor === state.newMovieListColor));
+        return;
+      }
+      const open = e.target.closest('[data-movie-list-open]');
+      if (open) {
+        state.movieCurrentListId = open.dataset.movieListOpen;
+        state.creatingMovieList = false;
+        renderMovieLists();
+        return;
+      }
+      const action = e.target.closest('[data-action]');
+      if (!action) return;
+      const act = action.dataset.action;
+      if (act === 'movie-list-new') {
+        state.creatingMovieList = true;
+        state.newMovieListColor = PALETTE[10];
+        renderMovieLists();
+      } else if (act === 'movie-list-create-cancel') {
+        state.creatingMovieList = false;
+        renderMovieLists();
+      } else if (act === 'movie-list-create') {
+        const name = (($('#newMovieListName') || {}).value || '').trim();
+        if (!name) {
+          toast('请填写片单名称', 'err');
+          return;
+        }
+        try {
+          await api('/api/movie-lists', {
+            method: 'POST',
+            body: {
+              name,
+              description: (($('#newMovieListDesc') || {}).value || '').trim(),
+              color: state.newMovieListColor,
+            },
+          });
+          state.creatingMovieList = false;
+          await refresh();
+          renderMovieLists();
+          toast(`片单「${name}」已创建`);
+        } catch (err) {
+          toast(`创建失败：${err.message}`, 'err');
+        }
+      } else if (act === 'movie-list-back') {
+        state.movieCurrentListId = '';
+        renderMovieLists();
+      } else if (act === 'movie-list-add') {
+        if (!state.movies.length) {
+          toast('片库还是空的，先加几部影片', 'err');
+          return;
+        }
+        openMovieListPicker(state.movieCurrentListId);
+      } else if (act === 'movie-list-edit') {
+        const l = state.movieLists.find((x) => x.id === state.movieCurrentListId);
+        if (!l) return;
+        const name = window.prompt('片单名称', l.name);
+        if (name == null) return;
+        const desc = window.prompt('一句话说明', l.description || '');
+        if (desc == null) return;
+        try {
+          const res = await api(`/api/movie-lists/${encodeURIComponent(l.id)}`, {
+            method: 'PATCH',
+            body: { name: name.trim(), description: desc.trim() },
+          });
+          Object.assign(l, res.movieList);
+          await refresh();
+          renderMovieLists();
+          toast('已保存');
+        } catch (err) {
+          toast(`保存失败：${err.message}`, 'err');
+        }
+      } else if (act === 'movie-list-delete') {
+        const l = state.movieLists.find((x) => x.id === state.movieCurrentListId);
+        if (!l) return;
+        if (!window.confirm(`确定删除片单「${l.name}」？影片本身不会被删除。`)) return;
+        try {
+          await api(`/api/movie-lists/${encodeURIComponent(l.id)}`, { method: 'DELETE' });
+          state.movieCurrentListId = '';
+          await refresh();
+          renderMovieLists();
+          toast('片单已删除');
+        } catch (err) {
+          toast(`删除失败：${err.message}`, 'err');
+        }
+      }
+    });
+    $('#listsBody').addEventListener('change', async (e) => {
+      if (state.mode !== 'movie') return;
+      if (e.target.id !== 'movieListSort') return;
+      const l = state.movieLists.find((x) => x.id === state.movieCurrentListId);
+      if (!l) return;
+      l.sort = e.target.value;
+      try {
+        await api(`/api/movie-lists/${encodeURIComponent(l.id)}`, { method: 'PATCH', body: { sort: l.sort } });
+      } catch (err) {
+        toast(`排序保存失败：${err.message}`, 'err');
+      }
+      renderMovieLists();
+    });
+
+    $('#btnViewMode').addEventListener('click', () => {      const order = ['grid', 'list', 'group'];
       state.viewMode = order[(order.indexOf(state.viewMode) + 1) % order.length];
       localStorage.setItem('bn.viewMode', state.viewMode);
       $('#btnViewMode').textContent = state.viewMode === 'grid' ? '▦' : state.viewMode === 'list' ? '☰' : '⊞';
@@ -2862,6 +3339,18 @@
               /* 忽略 */
             }
           }, 1200);
+        } else if (action === 'save-tmdb') {
+          const key = $('#tmdbKey').value.trim();
+          const res = await api('/api/settings', { method: 'PATCH', body: { tmdbApiKey: key } });
+          state.settings.tmdbApiKey = res.settings.tmdbApiKey;
+          toast(key ? 'TMDb Key 已保存，影片搜索会带上 TMDb' : '已清除 TMDb Key');
+          renderSettings();
+        } else if (action === 'save-omdb') {
+          const key = $('#omdbKey').value.trim();
+          const res = await api('/api/settings', { method: 'PATCH', body: { omdbApiKey: key } });
+          state.settings.omdbApiKey = res.settings.omdbApiKey;
+          toast(key ? 'OMDb Key 已保存，IMDb 影片可补全详情' : '已清除 OMDb Key');
+          renderSettings();
         } else if (action === 'wipe') {
           if (!window.confirm('⚠️ 将删除全部书籍、分类、标签，且不可恢复。确定继续？')) return;
           if (!window.confirm('再确认一次：真的要清空所有数据吗？')) return;
@@ -2890,6 +3379,929 @@
         toast(`导入失败：${err.message}`, 'err');
       }
     });
+  }
+
+  /* ---------------- 电影模块 ---------------- */
+
+  const MOVIE_STATUS_ORDER = ['wish', 'watching', 'watched', 'dropped'];
+
+  function posterSrc(m) {
+    if (!m) return '';
+    if (m.poster) return m.poster;
+    if (m.posterRemote) return `/api/cover?src=${encodeURIComponent(m.posterRemote)}`;
+    return '';
+  }
+
+  function movieById(id) {
+    return state.movies.find((m) => m.id === id) || null;
+  }
+
+  function movieStatusOf(m) {
+    return state.movieStatuses[m && m.status] || { label: m && m.status, color: '#94a3b8' };
+  }
+
+  function filteredMovies() {
+    const f = state.movieFilters;
+    const q = f.q.trim().toLowerCase();
+    let list = state.movies.slice();
+    if (f.status) list = list.filter((m) => m.status === f.status);
+    if (f.genre) list = list.filter((m) => (m.genres || []).includes(f.genre));
+    if (f.tag) list = list.filter((m) => (m.tags || []).includes(f.tag));
+    if (q) {
+      list = list.filter((m) =>
+        [m.title, m.originalTitle, (m.aka || []).join(' '), (m.directors || []).join(' '), (m.actors || []).join(' '), (m.genres || []).join(' '), m.year, m.note]
+          .join(' ')
+          .toLowerCase()
+          .includes(q)
+      );
+    }
+    const year = (m) => Number(String(m.year || '').match(/\d{4}/) || 0);
+    const statusRank = (m) => {
+      const i = MOVIE_STATUS_ORDER.indexOf(m.status);
+      return i < 0 ? 99 : i;
+    };
+    list.sort((a, b) => {
+      switch (f.sort) {
+        case 'added-asc':
+          return String(a.addedAt).localeCompare(String(b.addedAt));
+        case 'updated-desc':
+          return String(b.updatedAt).localeCompare(String(a.updatedAt));
+        case 'rating-desc':
+          return (b.rating || 0) - (a.rating || 0);
+        case 'myrating-desc':
+          return (b.myRating || 0) - (a.myRating || 0) || (b.rating || 0) - (a.rating || 0);
+        case 'title-asc':
+          return String(a.title).localeCompare(String(b.title), 'zh-Hans-CN');
+        case 'director-asc':
+          return String((a.directors || [])[0] || '').localeCompare(String((b.directors || [])[0] || ''), 'zh-Hans-CN');
+        case 'year-desc':
+          return year(b) - year(a);
+        case 'year-asc':
+          return year(a) - year(b);
+        case 'status-asc':
+          return statusRank(a) - statusRank(b) || String(b.addedAt).localeCompare(String(a.addedAt));
+        default:
+          return String(b.addedAt).localeCompare(String(a.addedAt));
+      }
+    });
+    return list;
+  }
+
+  function movieCardHtml(m) {
+    const p = posterSrc(m);
+    const st = movieStatusOf(m);
+    return `<button class="movie-card" data-movie="${esc(m.id)}">
+      <div class="poster">
+        ${p ? `<img loading="lazy" src="${esc(p)}" alt="">` : '🎬'}
+        <span class="st" style="background:${esc(st.color)}">${esc(st.label)}</span>
+        ${m.rating ? `<span class="rt">★ ${m.rating}</span>` : ''}
+      </div>
+      <div class="t">${esc(m.title)}</div>
+      <div class="s">${esc([m.year, (m.directors || [])[0]].filter(Boolean).join(' · ') || '—')}</div>
+    </button>`;
+  }
+
+  function movieRowHtml(m) {
+    const p = posterSrc(m);
+    const st = movieStatusOf(m);
+    return `<button class="row" data-movie="${esc(m.id)}">
+      <div class="cover">${p ? `<img loading="lazy" src="${esc(p)}" alt="">` : '🎬'}</div>
+      <div class="meta">
+        <div class="t">${esc(m.title)}</div>
+        <div class="s">${esc([m.year, (m.directors || []).join(' / ')].filter(Boolean).join(' · ') || '—')}</div>
+        <div class="row-chips">
+          <span class="chip-mini" style="background:${esc(st.color)}22;color:${esc(st.color)}">${esc(st.label)}</span>
+          ${m.rating ? `<span class="chip-mini">★ ${m.rating}</span>` : ''}
+          ${(m.genres || []).slice(0, 2).map((g) => `<span class="chip-mini">${esc(g)}</span>`).join('')}
+          ${(m.tags || []).slice(0, 2).map((id) => {
+            const t = state.tags.find((x) => x.id === id);
+            return t ? `<span class="chip-mini" style="background:${esc(t.color)}22;color:${esc(t.color)}">${esc(t.name)}</span>` : '';
+          }).join('')}
+        </div>
+      </div>
+    </button>`;
+  }
+
+  function renderMovieShelf() {
+    const list = filteredMovies();
+    const view = $('#view');
+    const countEl = $('#shelfCount');
+    if (countEl) countEl.textContent = state.movies.length ? `共 ${state.movies.length} 部` : '';
+    const summary = `<div class="shelf-summary"><span>当前显示 ${list.length} 部${
+      state.movieFilters.q ? ` · 搜索「${esc(state.movieFilters.q)}」` : ''
+    }</span><span>${esc((state.movieStatuses[state.movieFilters.status] || {}).label || '全部')}</span></div>`;
+
+    if (!state.movies.length) {
+      view.innerHTML = `<div class="empty"><div class="big">🎬</div><p><b>片库还是空的</b></p>
+        <p>点下面的「加片」搜索片名，<br>从豆瓣 / IMDb / TMDb 抓取信息后加入。</p>
+        <div class="btn-row" style="max-width:260px;margin:16px auto 0">
+          <button class="btn" data-action="open-movie-search">搜索添加影片</button>
+        </div></div>`;
+      return;
+    }
+    if (!list.length) {
+      view.innerHTML = `${summary}<div class="empty"><div class="big">🔍</div><p>没有符合条件的影片</p>
+        <p><button class="btn ghost sm" data-action="clear-movie-filters">清空筛选</button></p></div>`;
+      return;
+    }
+    if (state.viewMode === 'list') {
+      view.innerHTML = `${summary}<div class="list">${list.map(movieRowHtml).join('')}</div>`;
+      return;
+    }
+    if (state.viewMode === 'group') {
+      const groups = new Map();
+      for (const m of list) {
+        const g = (m.genres || [])[0] || '未分类';
+        if (!groups.has(g)) groups.set(g, []);
+        groups.get(g).push(m);
+      }
+      const html = Array.from(groups.entries())
+        .sort((a, b) => b[1].length - a[1].length)
+        .map(
+          ([name, items]) =>
+            `<div class="group-title"><span class="chip" style="font-weight:700">${esc(name)}</span>
+             <span style="color:var(--text-mute);font-weight:400">${items.length} 部</span></div>
+             <div class="movie-grid">${items.map(movieCardHtml).join('')}</div>`
+        )
+        .join('');
+      view.innerHTML = summary + html;
+      return;
+    }
+    view.innerHTML = `${summary}<div class="movie-grid">${list.map(movieCardHtml).join('')}</div>`;
+  }
+
+  function renderMovieTabLabel() {
+    const btn = $('#tabbar button[data-tab="scan"]');
+    if (btn) btn.innerHTML = state.mode === 'movie' ? '<span class="ico">＋</span>加片' : '<span class="ico">▣</span>扫码';
+    const listBtn = $('#tabbar button[data-tab="lists"]');
+    if (listBtn) listBtn.innerHTML = state.mode === 'movie' ? '<span class="ico">🎞</span>片单' : '<span class="ico">📚</span>书单';
+  }
+
+  function moviePills(field, options, current) {
+    return options
+      .map(([key, label, color]) => {
+        const on = current === key;
+        return `<button class="pill ${on ? 'on' : ''}" data-movie-${field}="${esc(key)}" ${
+          on && color ? `style="background:${esc(color)};border-color:${esc(color)};color:#fff"` : ''
+        }>${esc(label)}</button>`;
+      })
+      .join('');
+  }
+
+  function openMovieSheet(input, opts = {}) {
+    if (typeof input === 'string') {
+      const m = movieById(input);
+      if (!m) return;
+      state.movieDraft = { movie: m, isNew: false, patch: {}, excluded: new Set() };
+      state.movieRelated = null;
+    } else {
+      state.movieDraft = { movie: { ...input, status: input.status || 'wish', tags: input.tags || [] }, isNew: !opts.saved, patch: {}, excluded: new Set() };
+      state.movieRelated = { candidates: input.recommendations || [] };
+    }
+    if (opts.saved) state.movieDraft.isNew = false;
+    renderMovieSheet();
+    openSheet('#sheetMovie');
+    if (state.movieDraft.isNew === false) ensureMovieRelated();
+  }
+
+  function movieSheetHtml() {
+    const d = state.movieDraft;
+    const m = d.movie;
+    const p = posterSrc(m);
+    const st = movieStatusOf(m);
+    const tags = state.tags;
+    const related = state.movieRelated;
+    const inLists = state.movieLists.filter((l) => (l.movieIds || []).includes(m.id));
+    const sim = d.isNew ? [] : similarMovies(m);
+
+    const info = (k, v) =>
+      v ? `<div class="kv"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>` : '';
+    const runtime = (m.durations || []).join(' / ');
+
+    return `
+      <div class="hint" style="margin-bottom:10px">${
+        d.isNew ? '确认信息后点「加入片库」，也可以直接点状态' : '状态 / 标签 / 片单 / 我的评分 改动即时生效'
+      }</div>
+      <div class="movie-hero">
+        <div class="poster">${
+          p
+            ? `<button class="cover-zoom" data-act="zoom-cover" data-src="${esc(p)}" title="点击放大海报"><img src="${esc(p)}" alt=""></button>`
+            : '<div class="ph" style="text-align:center;font-size:34px;padding:34px 0">🎬</div>'
+        }</div>
+        <div style="flex:1;min-width:0">
+          <h3>${esc(m.title)}</h3>
+          ${m.originalTitle && m.originalTitle !== m.title ? `<div class="line">${esc(m.originalTitle)}</div>` : ''}
+          <div class="line">${esc(
+            [m.year, m.type === 'tv' ? '剧集' : '电影', runtime, (m.countries || []).join(' ')].filter(Boolean).join(' · ') || '—'
+          )}</div>
+          ${m.rating ? `<div class="line" style="color:#fbbf24">★ ${m.rating} <span style="color:var(--text-mute)">${
+            esc(m.ratingLabel || '评分')
+          }${m.ratingCount ? ` · ${m.ratingCount} 人` : ''}</span></div>` : ''}
+          <div style="margin-top:6px">${(m.genres || []).map((g) => `<span class="genre-chip">${esc(g)}</span>`).join('')}</div>
+          <div class="line" style="margin-top:6px">${esc((m.directors || []).join(' / ') || '')}${
+            (m.actors || []).length ? ` <span style="color:var(--text-mute)">主演 ${esc(m.actors.slice(0, 4).join(' '))}</span>` : ''
+          }</div>
+          ${m.sourceUrl ? `<div class="line"><a href="${esc(m.sourceUrl)}" target="_blank" rel="noopener" style="color:var(--brand)">在${
+            esc(m.sourceLabel || (m.source === 'douban' ? '豆瓣' : m.source === 'tmdb' ? 'TMDb' : 'IMDb'))
+          }查看 ↗</a></div>` : ''}
+        </div>
+      </div>
+
+      ${
+        d.isNew
+          ? `<div class="btn-row" style="margin-bottom:14px">
+              <button class="btn ghost" data-action="movie-cancel">取消</button>
+              <button class="btn" data-action="movie-save-new">＋ 加入片库</button>
+            </div>`
+          : ''
+      }
+
+      <div class="field"><label>观看状态</label>
+        <div class="status-picker" id="movieStatusPicker">
+          ${MOVIE_STATUS_ORDER.map((key) => {
+            const s = state.movieStatuses[key] || { label: key, color: '#94a3b8' };
+            const on = m.status === key;
+            return `<button class="${on ? 'on' : ''}" data-movie-status="${key}" ${
+              on ? `style="background:${esc(s.color)};border-color:${esc(s.color)};color:#fff"` : `style="color:${esc(s.color)}"`
+            }>${esc(s.label)}</button>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <div class="field"><label>我的评分</label>
+        <div class="stars-big" id="movieStars">${[1, 2, 3, 4, 5]
+          .map((i) => `<span class="${(m.myRating || 0) >= i ? 'on' : ''}" data-movie-star="${i}">★</span>`)
+          .join('')}<span style="font-size:12.5px;color:var(--text-mute);align-self:center;margin-left:6px">${
+          m.myRating ? `${m.myRating} 分` : '未评分'
+        }</span></div>
+      </div>
+
+      <div class="field"><label>标签</label>
+        <div class="picker" id="movieTagPicker">
+          ${tags
+            .map(
+              (t) =>
+                `<button class="pill ${(m.tags || []).includes(t.id) ? 'on' : ''}" data-movie-tag="${esc(t.id)}" ${
+                  (m.tags || []).includes(t.id) ? `style="background:${esc(t.color)};border-color:${esc(t.color)};color:#fff"` : ''
+                }>${esc(t.name)}</button>`
+            )
+            .join('')}
+          <button class="pill add" data-action="movie-new-tag">＋ 新标签</button>
+        </div>
+        <div id="movieNewTagForm" class="hidden" style="margin-top:8px">
+          <div class="inline-form">
+            <input type="text" id="movieTagName" placeholder="标签名称" maxlength="16">
+            <button class="btn sm" data-action="movie-create-tag">创建</button>
+          </div>
+          <div class="palette" id="movieTagPalette">${PALETTE.map(
+            (c) => `<button data-mcolor="${c}" style="background:${c}"></button>`
+          ).join('')}</div>
+        </div>
+      </div>
+
+      <div class="field"><label>加入片单</label>
+        <div class="picker" id="movieListPicker">
+          ${
+            state.movieLists.length
+              ? state.movieLists
+                  .map(
+                    (l) =>
+                      `<button class="pill ${inLists.some((x) => x.id === l.id) ? 'on' : ''}" data-movie-list="${esc(l.id)}" ${
+                        inLists.some((x) => x.id === l.id) ? `style="background:${esc(l.color)};border-color:${esc(l.color)};color:#fff"` : ''
+                      }>${inLists.some((x) => x.id === l.id) ? '✓ ' : ''}${esc(l.name)}</button>`
+                  )
+                  .join('')
+              : '<span class="hint" style="font-size:12px">还没有片单，去「片单」页新建</span>'
+          }
+        </div>
+        <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-top:6px">点一下即时生效：勾选＝加入片单，取消勾选＝从该片单移出</div>
+      </div>
+
+      <div class="field"><label>备注</label>
+        <textarea id="movieNote" rows="2" placeholder="在哪看的、和谁看的、想记的点…">${esc(m.note || '')}</textarea>
+        <div class="inline-form" style="margin-top:8px;justify-content:flex-end">
+          <span class="save-hint" id="movieSaveHint"></span>
+          <button class="btn sm ghost" data-action="movie-save-note">保存备注</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <button class="collapse-head" data-action="toggle-movie-details">
+          <span>▾ 详细信息${d.showDetails === false ? '（已收起）' : '（可手动修改）'}</span>
+        </button>
+        <div class="${d.showDetails === false ? 'hidden' : ''}" id="movieDetails">
+          ${info('导演', (m.directors || []).join(' / '))}
+          ${info('主演', (m.actors || []).join(' / '))}
+          ${info('类型', (m.genres || []).join(' / '))}
+          ${info('国家/地区', (m.countries || []).join(' / '))}
+          ${info('语言', (m.languages || []).join(' / '))}
+          ${info('片长', runtime)}
+          ${info('上映日期', (m.releaseDates || []).join(' / '))}
+          ${info('别名', (m.aka || []).join(' / '))}
+          ${info('IMDb / TMDb', m.source === 'douban' && m.sourceId ? `豆瓣 #${m.sourceId}` : m.sourceId || '')}
+          ${
+            m.summary
+              ? `<div class="summary" style="margin-top:10px"><div class="summary-title">剧情简介</div><p>${esc(m.summary)}</p></div>`
+              : ''
+          }
+          ${!d.isNew ? `<div class="btn-row" style="margin-top:12px">
+            <button class="btn ghost sm" data-action="movie-refetch">↻ 重新抓取信息</button>
+            <button class="btn ghost sm danger" data-action="movie-delete">删除影片</button>
+          </div>` : ''}
+        </div>
+      </div>
+
+      ${
+        sim.length
+          ? `<div class="field"><label>片库里的相似影片</label><div class="sim-row">${sim
+              .map(
+                (x) =>
+                  `<button class="sim-card" data-movie="${esc(x.movie.id)}"><div class="cover">${
+                    posterSrc(x.movie) ? `<img loading="lazy" src="${esc(posterSrc(x.movie))}" alt="">` : '🎬'
+                  }</div><div class="t">${esc(x.movie.title)}</div><div class="s">${esc(x.reason)}</div></button>`
+              )
+              .join('')}</div></div>`
+          : ''
+      }
+
+      ${
+        !d.isNew
+          ? `<div class="field"><label>相似与推荐 ${
+              related && related.candidates && related.candidates.length ? `<span class="hint" style="font-weight:400">（${
+                related.candidates.length
+              } 部）</span>` : ''
+            }</label>
+            <div id="movieRelated">${
+              related === null
+                ? '<div class="center"><span class="spinner"></span> 正在找相似影片…</div>'
+                : related && related.error
+                ? `<div class="hint">${esc(related.error)}</div>`
+                : related && related.candidates && related.candidates.length
+                ? `<div class="sim-row">${related.candidates
+                    .map(
+                      (c) =>
+                        `<button class="sim-card" data-movie-add="${esc(c.source)}|${esc(c.sourceId)}|${esc(c.title)}|${esc(
+                          c.year || ''
+                        )}"><div class="cover">${c.poster ? `<img loading="lazy" src="${esc(c.poster)}" alt="">` : '🎬'}</div>
+                        <div class="t">${esc(c.title)}</div><div class="s">${esc(
+                          [c.year, c.rating ? `★${c.rating}` : '', c.reason || ''].filter(Boolean).join(' · ')
+                        )}</div></button>`
+                    )
+                    .join('')}</div>`
+                : '<div class="hint">暂时没有找到相似影片</div>'
+            }</div>
+            <div class="btn-row" style="margin-top:8px"><button class="btn ghost sm" data-action="movie-related-refresh">↻ 换一批</button></div>
+          </div>`
+          : ''
+      }`;
+  }
+
+  function renderMovieSheet() {
+    const d = state.movieDraft;
+    if (!d) return;
+    const body = $('#movieSheetBody');
+    const scroll = body.scrollTop;
+    $('#movieSheetTitle').textContent = d.isNew ? '确认影片信息' : '影片详情';
+    body.innerHTML = movieSheetHtml();
+    body.scrollTop = scroll;
+  }
+
+  function similarMovies(m) {
+    const norm = (s) => String(s || '').toLowerCase();
+    const titleSim = (a, b) => {
+      const x = norm(a);
+      const y = norm(b);
+      if (!x || !y) return 0;
+      if (x === y) return 1;
+      const setB = new Set(y.split(''));
+      let hit = 0;
+      for (const ch of new Set(x.split(''))) if (setB.has(ch)) hit += 1;
+      return hit / Math.max(new Set(x.split('')).size, 1);
+    };
+    return state.movies
+      .filter((x) => x.id !== m.id)
+      .map((x) => {
+        let score = 0;
+        const reasons = [];
+        const sharedG = (x.genres || []).filter((g) => (m.genres || []).includes(g));
+        if (sharedG.length) {
+          score += Math.min(3, sharedG.length * 1.5);
+          reasons.push(`同类型 · ${sharedG.slice(0, 2).join('/')}`);
+        }
+        const sharedD = (x.directors || []).filter((g) => (m.directors || []).includes(g));
+        if (sharedD.length) {
+          score += 3;
+          reasons.push(`同导演 · ${sharedD[0]}`);
+        }
+        const sharedA = (x.actors || []).filter((g) => (m.actors || []).includes(g));
+        if (sharedA.length) {
+          score += Math.min(2, sharedA.length);
+          reasons.push(`同演员 · ${sharedA[0]}`);
+        }
+        const sharedC = (x.countries || []).filter((g) => (m.countries || []).includes(g));
+        if (sharedC.length) score += 0.5;
+        const ts = titleSim(x.title, m.title);
+        if (ts >= 0.6 && x.title !== m.title) {
+          score += 2;
+          reasons.push('片名相近');
+        }
+        if (x.year && m.year && x.year === m.year) score += 0.3;
+        return { movie: x, score, reason: reasons.slice(0, 2).join(' · ') || '相关' };
+      })
+      .filter((x) => x.score >= 2)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+  }
+
+  async function ensureMovieRelated(force) {
+    const d = state.movieDraft;
+    if (!d || d.isNew) return;
+    const m = d.movie;
+    if (!force && state.movieRelated && state.movieRelated.movieId === m.id) return;
+    state.movieRelated = { movieId: m.id, candidates: [] };
+    const box = $('#movieRelated');
+    if (box) box.innerHTML = '<div class="center"><span class="spinner"></span> 正在找相似影片…</div>';
+    try {
+      const res = await api(`/api/movies/${encodeURIComponent(m.id)}/related${force ? '?force=1' : ''}`);
+      state.movieRelated = { movieId: m.id, candidates: res.candidates || [], error: res.error || '' };
+    } catch (err) {
+      state.movieRelated = { movieId: m.id, candidates: [], error: err.message };
+    }
+    if (state.movieDraft && state.movieDraft.movie.id === m.id) renderMovieSheet();
+  }
+
+  async function autoSaveMovie(patch) {
+    const d = state.movieDraft;
+    if (!d || d.isNew) return;
+    const m = d.movie;
+    const hint = $('#movieSaveHint');
+    if (hint) {
+      hint.textContent = '● 保存中…';
+      hint.className = 'save-hint saving';
+    }
+    const before = { ...m };
+    Object.assign(m, patch);
+    try {
+      const res = await api(`/api/movies/${encodeURIComponent(m.id)}`, { method: 'PATCH', body: patch });
+      const idx = state.movies.findIndex((x) => x.id === m.id);
+      if (idx >= 0) state.movies[idx] = res.movie;
+      d.movie = res.movie;
+      state.movieStats = state.movieStats || {};
+      api('/api/stats').then((s) => {
+        state.stats = s;
+        state.movieStats = s.movie || state.movieStats;
+        renderStatusChips();
+      }).catch(() => {});
+      if (hint) {
+        hint.textContent = '✓ 已保存';
+        hint.className = 'save-hint saved';
+      }
+      return res.movie;
+    } catch (err) {
+      Object.assign(m, before);
+      const idx = state.movies.findIndex((x) => x.id === m.id);
+      if (idx >= 0) state.movies[idx] = before;
+      if (hint) {
+        hint.textContent = '⚠ 保存失败';
+        hint.className = 'save-hint failed';
+      }
+      toast(`保存失败：${err.message}`, 'err');
+      return null;
+    }
+  }
+
+  async function saveNewMovie(status) {
+    const d = state.movieDraft;
+    if (!d) return;
+    const m = d.movie;
+    const payload = { ...m, status: status || m.status || 'wish' };
+    try {
+      const res = await api('/api/movies', { method: 'POST', body: payload });
+      state.movies.unshift(res.movie);
+      state.movieDraft = { movie: res.movie, isNew: false, patch: {}, excluded: new Set() };
+      const st = state.movieStatuses[payload.status] || {};
+      toast(`已加入片库 · ${st.label || ''}`);
+      await refresh();
+      openMovieSheet(res.movie.id);
+    } catch (err) {
+      if (err.status === 409 && err.data && err.data.movie) {
+        toast('这部影片已经在片库里了');
+        openMovieSheet(err.data.movie.id);
+        return;
+      }
+      toast(`加入失败：${err.message}`, 'err');
+    }
+  }
+
+  /* ---- 影片搜索 ---- */
+
+  function openMovieSearch(prefill) {
+    state.movieSearch = { q: prefill || '', results: [], sources: [], busy: false, error: '' };
+    renderMovieSearch();
+    openSheet('#sheetMovieSearch');
+    setTimeout(() => {
+      const input = $('#movieSearchInput');
+      if (input) input.focus();
+    }, 120);
+    if (prefill) runMovieSearch(prefill);
+  }
+
+  function renderMovieSearch() {
+    const s = state.movieSearch;
+    $('#movieSearchBody').innerHTML = `
+      <div class="searchbox" style="margin-bottom:10px">
+        <input id="movieSearchInput" type="search" placeholder="输入片名 / 原名 / 演员，如：星际穿越" value="${esc(s.q)}" autocomplete="off">
+      </div>
+      <div class="btn-row" style="margin-bottom:12px">
+        <button class="btn" data-action="movie-search-run">${s.busy ? '搜索中…' : '搜索'}</button>
+      </div>
+      <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-bottom:8px">
+        数据来自 豆瓣 + IMDb${state.settings.tmdbApiKey ? ' + TMDb' : ''}（在设置里可填 TMDb / OMDb Key 以获取更全的海外影片信息）；点一条即抓取详情
+      </div>
+      ${
+        s.error
+          ? `<div class="hint" style="color:#f87171">${esc(s.error)}</div>`
+          : s.busy
+          ? '<div class="center"><span class="spinner"></span> 正在搜索…</div>'
+          : s.results.length
+          ? s.results
+              .map(
+                (r) => `<button class="search-item" data-movie-pick="${esc(r.source)}|${esc(r.sourceId)}|${esc(r.title)}|${esc(r.year || '')}">
+                  <div class="poster">${r.poster ? `<img loading="lazy" src="${esc(r.poster)}" alt="">` : '🎬'}</div>
+                  <div class="info">
+                    <div class="t">${esc(r.title)}</div>
+                    <div class="s">${esc(
+                      [r.year, r.subtitle, r.type === 'tv' ? '剧集' : '电影', r.rating ? `★ ${r.rating}` : '', (r.actors || []).slice(0, 2).join(' ')]
+                        .filter(Boolean)
+                        .join(' · ')
+                    )}</div>
+                  </div>
+                  <span class="badge">${esc(r.sourceLabel)}</span>
+                </button>`
+              )
+              .join('')
+          : s.q
+          ? '<div class="center">没有找到相关影片</div>'
+          : '<div class="center">输入片名开始搜索</div>'
+      }
+      <div class="btn-row" style="margin-top:14px">
+        <button class="btn ghost" data-action="movie-manual">手动录入影片</button>
+      </div>`;
+  }
+
+  async function runMovieSearch(keyword) {
+    const q = (keyword != null ? keyword : (($('#movieSearchInput') || {}).value || '')).trim();
+    if (!q) return;
+    state.movieSearch.q = q;
+    state.movieSearch.busy = true;
+    state.movieSearch.error = '';
+    renderMovieSearch();
+    try {
+      const res = await api(`/api/movie-search?q=${encodeURIComponent(q)}`);
+      state.movieSearch.results = res.results || [];
+      state.movieSearch.sources = res.sources || [];
+      state.movieSearch.error = res.error || '';
+    } catch (err) {
+      state.movieSearch.error = err.message;
+      state.movieSearch.results = [];
+    }
+    state.movieSearch.busy = false;
+    renderMovieSearch();
+  }
+
+  async function pickMovieResult(source, sourceId, title, year) {
+    const s = state.movieSearch;
+    s.busy = true;
+    s.error = '';
+    renderMovieSearch();
+    try {
+      const res = await api('/api/movie-lookup', { method: 'POST', body: { source, sourceId, title, year } });
+      s.busy = false;
+      openMovieSheet(res.record, { saved: false });
+    } catch (err) {
+      s.busy = false;
+      s.error = `抓取失败：${err.message}`;
+      renderMovieSearch();
+    }
+  }
+
+  /* ---- 片单 ---- */
+
+  function renderMovieLists() {
+    $('#listsTitle').textContent = '我的片单';
+    const lists = state.movieLists;
+    const creating = state.creatingMovieList
+      ? `<div class="section" style="background:var(--bg-elev);border:1px solid var(--line);border-radius:var(--radius);padding:12px">
+          <div class="inline-form"><input type="text" id="newMovieListName" placeholder="片单名称，例如「诺兰合集」" maxlength="24"></div>
+          <div class="inline-form" style="margin-top:8px"><input type="text" id="newMovieListDesc" placeholder="一句话说明（可选）" maxlength="60"></div>
+          <div class="palette" id="movieListPalette">${PALETTE.map(
+            (c) => `<button data-mlcolor="${c}" class="${state.newMovieListColor === c ? 'on' : ''}" style="background:${c}"></button>`
+          ).join('')}</div>
+          <div class="btn-row" style="margin-top:10px">
+            <button class="btn ghost" data-action="movie-list-create-cancel">取消</button>
+            <button class="btn" data-action="movie-list-create">创建片单</button>
+          </div>
+        </div>`
+      : '';
+    if (state.movieCurrentListId) return renderMovieListDetail(state.movieCurrentListId, creating);
+
+    $('#listsBody').innerHTML = `
+      ${creating}
+      <div class="btn-row" style="margin-bottom:14px">
+        <button class="btn ghost" data-action="movie-list-new">＋ 新建片单</button>
+      </div>
+      ${
+        lists.length
+          ? lists
+              .map((l) => {
+                const st = l.stats || {};
+                return `<button class="list-card" data-movie-list-open="${esc(l.id)}">
+                  <div class="list-card-head">
+                    <span class="dot" style="background:${esc(l.color)}"></span>
+                    <b>${esc(l.name)}</b>
+                    <span class="spacer"></span>
+                    <span class="hint">${esc(st.label || '0/0')}</span>
+                  </div>
+                  ${l.description ? `<div class="hint" style="margin:4px 0 6px">${esc(l.description)}</div>` : ''}
+                  <div class="bar"><i style="width:${st.progress || 0}%;background:${esc(l.color)}"></i></div>
+                  <div class="chips" style="margin-top:8px">
+                    <span class="chip-mini">想看 ${st.wish || 0}</span>
+                    <span class="chip-mini">在看 ${st.watching || 0}</span>
+                    <span class="chip-mini">看过 ${st.watched || 0}</span>
+                    ${st.avgMyRating ? `<span class="chip-mini">均分 ${st.avgMyRating}</span>` : ''}
+                  </div>
+                </button>`;
+              })
+              .join('')
+          : '<div class="center">还没有片单<br><span class="hint">片单可以把「诺兰合集」「宫崎骏」「待看清单」这类主题单独拎出来</span></div>'
+      }`;
+  }
+
+  function renderMovieListDetail(listId, creating) {
+    const l = state.movieLists.find((x) => x.id === listId);
+    if (!l) {
+      state.movieCurrentListId = '';
+      return renderMovieLists();
+    }
+    const ids = l.movieIds || [];
+    const movies = ids.map(movieById).filter(Boolean);
+    const sortKey = l.sort || 'added-desc';
+    const year = (m) => Number(String(m.year || '').match(/\d{4}/) || 0);
+    const statusRank = (m) => {
+      const i = MOVIE_STATUS_ORDER.indexOf(m.status);
+      return i < 0 ? 99 : i;
+    };
+    const order = (m) => ids.indexOf(m.id);
+    movies.sort((a, b) => {
+      switch (sortKey) {
+        case 'added-asc':
+          return order(a) - order(b);
+        case 'rating-desc':
+          return (b.rating || 0) - (a.rating || 0);
+        case 'myrating-desc':
+          return (b.myRating || 0) - (a.myRating || 0);
+        case 'title-asc':
+          return String(a.title).localeCompare(String(b.title), 'zh-Hans-CN');
+        case 'director-asc':
+          return String((a.directors || [])[0] || '').localeCompare(String((b.directors || [])[0] || ''), 'zh-Hans-CN');
+        case 'year-desc':
+          return year(b) - year(a);
+        case 'year-asc':
+          return year(a) - year(b);
+        case 'status-asc':
+          return statusRank(a) - statusRank(b) || order(b) - order(a);
+        default:
+          return order(b) - order(a);
+      }
+    });
+    const st = l.stats || {};
+    $('#listsBody').innerHTML = `
+      <button class="btn ghost sm" data-action="movie-list-back">‹ 全部片单</button>
+      <div class="section" style="margin-top:10px;background:var(--bg-elev);border:1px solid var(--line);border-radius:var(--radius);padding:12px">
+        <div class="list-card-head">
+          <span class="dot" style="background:${esc(l.color)}"></span>
+          <b style="font-size:15px">${esc(l.name)}</b>
+          <span class="spacer"></span>
+          <button class="btn ghost sm" data-action="movie-list-edit">编辑</button>
+        </div>
+        ${l.description ? `<div class="hint" style="margin:6px 0">${esc(l.description)}</div>` : ''}
+        <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+          <b style="font-size:19px">${esc(st.label || '0/0')}</b>
+          <span class="hint">看过 / 共</span>
+          <div class="bar" style="flex:1"><i style="width:${st.progress || 0}%;background:${esc(l.color)}"></i></div>
+        </div>
+        <div class="chips" style="margin-top:10px">
+          <span class="chip-mini">想看 ${st.wish || 0}</span>
+          <span class="chip-mini">在看 ${st.watching || 0}</span>
+          <span class="chip-mini">看过 ${st.watched || 0}</span>
+          ${st.dropped ? `<span class="chip-mini">弃看 ${st.dropped}</span>` : ''}
+        </div>
+        <div class="inline-form" style="margin-top:12px">
+          <select id="movieListSort">${Object.entries(state.movieListSorts)
+            .map(([k, label]) => `<option value="${esc(k)}" ${sortKey === k ? 'selected' : ''}>${esc(label)}</option>`)
+            .join('')}</select>
+          <button class="btn sm" data-action="movie-list-add">＋ 添加 / 管理影片</button>
+        </div>
+      </div>
+      ${creating || ''}
+      ${
+        movies.length
+          ? `<div class="movie-grid">${movies.map(movieCardHtml).join('')}</div>`
+          : '<div class="center">这个片单还是空的<br><span class="hint">点上面的「＋ 添加 / 管理影片」从片库里挑</span></div>'
+      }
+      <div class="btn-row" style="margin-top:16px">
+        <button class="btn ghost danger" data-action="movie-list-delete">删除片单</button>
+      </div>`;
+  }
+
+  function renderMovieListsIfOpen() {
+    if (state.mode !== 'movie') return;
+    const sheet = $('#sheetLists');
+    if (sheet && sheet.classList.contains('open')) renderMovieLists();
+  }
+
+  function openMovieListPicker(listId) {
+    const l = state.movieLists.find((x) => x.id === listId);
+    if (!l) return;
+    state.movieListPick = {
+      listId,
+      selected: new Set(l.movieIds || []),
+      query: '',
+      sort: localStorage.getItem('bn.movieListPickSort') || 'added-desc',
+    };
+    drawMovieListPicker();
+    openSheet('#sheetMovieListPick');
+  }
+
+  function drawMovieListPicker() {
+    const lp = state.movieListPick;
+    if (!lp) return;
+    const l = state.movieLists.find((x) => x.id === lp.listId);
+    if (!l) return;
+    const q = lp.query.trim().toLowerCase();
+    const inList = new Set(l.movieIds || []);
+    let movies = state.movies.filter(
+      (m) =>
+        !q ||
+        [m.title, m.originalTitle, (m.directors || []).join(' '), (m.actors || []).join(' '), (m.genres || []).join(' '), m.year]
+          .join(' ')
+          .toLowerCase()
+          .includes(q)
+    );
+    const year = (m) => Number(String(m.year || '').match(/\d{4}/) || 0);
+    const sortKey = lp.sort || 'added-desc';
+    movies = movies.slice().sort((a, b) => {
+      switch (sortKey) {
+        case 'added-asc':
+          return String(a.addedAt).localeCompare(String(b.addedAt));
+        case 'title-asc':
+          return String(a.title).localeCompare(String(b.title), 'zh-Hans-CN');
+        case 'year-desc':
+          return year(b) - year(a);
+        case 'rating-desc':
+          return (b.rating || 0) - (a.rating || 0);
+        default:
+          return String(b.addedAt).localeCompare(String(a.addedAt));
+      }
+    });
+    const sortOptions = [
+      ['added-desc', '最近添加'],
+      ['added-asc', '最早添加'],
+      ['members-first', '已在片单优先'],
+      ['title-asc', '片名 A→Z'],
+      ['year-desc', '年份新→旧'],
+      ['rating-desc', '评分高→低'],
+    ];
+    const sorted =
+      sortKey === 'members-first'
+        ? movies
+            .slice()
+            .sort(
+              (a, b) =>
+                (inList.has(b.id) ? 1 : 0) - (inList.has(a.id) ? 1 : 0) ||
+                String(b.addedAt).localeCompare(String(a.addedAt))
+            )
+        : movies;
+    $('#movieListPickTitle').textContent = `${l.name} · 选择影片`;
+    $('#movieListPickBody').innerHTML = `
+      <div class="field-row" style="margin-bottom:10px;align-items:center">
+        <input id="movieListPickSearch" type="search" placeholder="搜索片库里的影片" value="${esc(lp.query)}"
+          style="flex:1;min-width:0;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--bg-elev);padding:0 10px;outline:none">
+        <select id="movieListPickSort" style="flex:0 0 138px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--bg-elev);padding:0 8px;font-size:13px;color:var(--text-dim)">
+          ${sortOptions.map(([k, label]) => `<option value="${esc(k)}" ${sortKey === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="hint" style="font-size:12px;color:var(--text-mute);margin-bottom:8px">
+        已选 <b id="movieListPickCount">${lp.selected.size}</b> 部 · 共 ${sorted.length} 部可选；取消勾选即从片单移出
+      </div>
+      <div style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:12px">
+        ${
+          sorted.length
+            ? sorted
+                .map(
+                  (m) => `<label class="movie-pick-item">
+                    <input type="checkbox" data-mpick-id="${esc(m.id)}" ${lp.selected.has(m.id) ? 'checked' : ''}>
+                    <div class="poster">${posterSrc(m) ? `<img loading="lazy" src="${esc(posterSrc(m))}" alt="">` : '🎬'}</div>
+                    <div class="info"><div class="t">${esc(m.title)}</div><div class="s">${esc(
+                    [m.year, (m.directors || [])[0], inList.has(m.id) ? '已在片单' : ''].filter(Boolean).join(' · ')
+                  )}</div></div>
+                  </label>`
+                )
+                .join('')
+            : '<div class="center">没有匹配的影片</div>'
+        }
+      </div>
+      <div class="sticky-bar">
+        <button class="btn ghost" data-act="mpick-all">全选</button>
+        <button class="btn ghost" data-act="mpick-none">清空</button>
+        <button class="btn" data-act="mpick-save">完成</button>
+      </div>`;
+  }
+
+  async function applyMovieListPick(set) {
+    const lp = state.movieListPick;
+    if (!lp) return;
+    const l = state.movieLists.find((x) => x.id === lp.listId);
+    if (!l) return;
+    const current = new Set(l.movieIds || []);
+    const add = [...set].filter((id) => !current.has(id));
+    const remove = [...current].filter((id) => !set.has(id));
+    try {
+      if (add.length) {
+        const res = await api(`/api/movie-lists/${encodeURIComponent(l.id)}/movies`, { method: 'POST', body: { movieIds: add } });
+        Object.assign(l, res.movieList);
+      }
+      if (remove.length) {
+        const res = await api(`/api/movie-lists/${encodeURIComponent(l.id)}/movies/remove`, { method: 'POST', body: { movieIds: remove } });
+        Object.assign(l, res.movieList);
+      }
+      if (!add.length && !remove.length) {
+        /* nothing changed */
+      }
+      toast(`已更新片单：+${add.length} / -${remove.length}`);
+      await refresh();
+    } catch (err) {
+      toast(`更新失败：${err.message}`, 'err');
+    }
+  }
+
+  async function toggleMovieInList(listId) {
+    const d = state.movieDraft;
+    if (!d || d.isNew) {
+      toast('先加入片库再归入片单');
+      return;
+    }
+    const l = state.movieLists.find((x) => x.id === listId);
+    if (!l) return;
+    const inList = (l.movieIds || []).includes(d.movie.id);
+    try {
+      const res = await api(`/api/movie-lists/${encodeURIComponent(listId)}/movies${inList ? '/remove' : ''}`, {
+        method: 'POST',
+        body: { movieIds: [d.movie.id] },
+      });
+      Object.assign(l, res.movieList);
+      renderMovieSheet();
+      if (state.movieCurrentListId === listId) renderMovieLists();
+      toast(inList ? `已从「${l.name}」移出` : `已加入「${l.name}」`);
+    } catch (err) {
+      toast(`操作失败：${err.message}`, 'err');
+    }
+  }
+
+  function renderMovieStats() {
+    const s = state.movieStats || {};
+    const byStatus = s.byStatus || {};
+    const max = (arr) => Math.max(1, ...arr.map((x) => x.count));
+    $('#statsBody').innerHTML = `
+      <div class="stat-grid">
+        <div class="stat-card"><div class="num">${s.total || 0}</div><div class="lbl">影片总数</div></div>
+        <div class="stat-card"><div class="num">${byStatus.watched || 0}</div><div class="lbl">看过</div></div>
+        <div class="stat-card"><div class="num">${byStatus.watching || 0}</div><div class="lbl">在看</div></div>
+        <div class="stat-card"><div class="num">${byStatus.wish || 0}</div><div class="lbl">想看</div></div>
+        <div class="stat-card"><div class="num">${byStatus.dropped || 0}</div><div class="lbl">弃看</div></div>
+        <div class="stat-card"><div class="num">${s.avgMyRating || 0}</div><div class="lbl">平均我的评分</div></div>
+      </div>
+      <div class="section"><div class="section-head"><h3>类型分布</h3></div>
+        ${
+          (s.byGenre || []).length
+            ? (s.byGenre || [])
+                .slice(0, 12)
+                .map(
+                  (g) => `<div class="bar-row"><span class="bar-label">${esc(g.name)}</span>
+                    <div class="bar"><i style="width:${Math.round((g.count / max(s.byGenre)) * 100)}%"></i></div>
+                    <span class="bar-num">${g.count}</span></div>`
+                )
+                .join('')
+            : '<div class="hint">还没有数据</div>'
+        }
+      </div>
+      <div class="section"><div class="section-head"><h3>标签使用</h3></div>
+        <div class="chips">${
+          (s.byTag || [])
+            .map((t) => `<span class="chip-mini" style="background:${esc(t.color)}22;color:${esc(t.color)}">${esc(t.name)} ${t.count}</span>`)
+            .join('') || '<span class="hint">还没有标签</span>'
+        }</div>
+      </div>`;
   }
 
   /* ---------------- 启动 ---------------- */

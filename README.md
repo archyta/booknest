@@ -3,6 +3,8 @@
 用手机或电脑摄像头扫书背面的条形码，自动从公开资源抓取书目信息（封面、内容简介、评分、作者、出版时间、出版社…），
 按「想读 / 已购 / 在读 / 读过 / 弃读」管理，支持自动分类 + 手动分类，以及带颜色的标签。
 
+**🎬 还带一个影片板块**：搜索片名加入片库，标记「想看 / 在看 / 看过 / 弃看」，归入片单，影片详情同样有相似与推荐。
+
 **零第三方依赖**（只用 Node 内置模块），数据全部存在你自己电脑的一个 JSON 文件里。
 
 ---
@@ -113,7 +115,34 @@ cd booknest
 
 ---
 
-## 三、书籍信息来源
+## 三、影片板块（电影 / 剧集）
+
+顶部右上角切换 **书 / 影**，切到「影」后整个界面变成片库：
+
+- **加片**：底部中间的按钮变成「＋ 加片」→ 搜索片名（中文、原名、演员都能搜，如搜「王家卫」会列出《花样年华》《重庆森林》）
+  → 点一条即抓取详情 → 确认后「加入片库」；也可以「手动录入影片」只填片名。
+- **状态**：想看 / 在看 / 看过 / 弃看，和书籍一样**点了立即保存**；还有 5 星「我的评分」、彩色标签（与书籍共用同一套标签）、备注。
+- **片单（playlist）**：底部「片单」页可建任意多个片单（诺兰合集、宫崎骏、待看清单…），
+  进片单点「＋ 添加 / 管理影片」从片库勾选（可搜索、可排序：最近添加 / 已在片单优先 / 片名 / 年份 / 评分），
+  头部有 `看过 3/10` 进度条与「想看 / 在看 / 看过 / 弃看」细分，每个片单可单独排序。
+- **详情页**：海报（可点开放大看细节）、年份·片长·国家、评分与评价人数、类型标签、导演与主演、
+  原文片名与别名、上映日期、剧情简介，以及**相似与推荐**：
+  - **片库里的相似影片**（本地实时算：同类型 +1.5/项、同导演 +3、同演员 +2、片名相近 +2、同国家 +0.5，并标出理由）；
+  - **看过这部的人也喜欢**（豆瓣 `rexxar/api/v2/movie/<id>/recommendations`，一次 12 部）；
+  - 已经在片库里/自己会被自动排除；点一张即可查看并加入。
+- **重新抓取**：详情页「↻ 重新抓取信息」会用条目 id 重新拉一次元数据（保留你的状态/评分/标签/备注）。
+
+### 影片数据来源
+
+| 来源 | 说明 |
+| --- | --- |
+| 豆瓣电影 | 主力，中文片最全，**无需 Key**：搜索联想 `movie.douban.com/j/subject_suggest`，详情与推荐走移动版 `rexxar/api/v2/movie/<id>`。请求间隔 ≥1.1s 并本地缓存。 |
+| IMDb | 官方联想接口 `v2.sg.media-imdb.com/suggestion`，**无需 Key**，提供片名/年份/海报/主演；填一个免费 **OMDb Key**（设置页）可补全剧情、IMDb 评分与导演。 |
+| TMDb | 官方 API，需在**设置页**填免费 API Key；海外片信息更全，详情自带 recommendations / similar。 |
+
+海报会像书籍封面一样**本地化**存到 `data/covers/`；境外图床走 `/api/cover` 代理并带正确 Referer。
+
+## 四、书籍信息来源
 
 按顺序降级，结果按来源优先级合并（豆瓣 > 微信读书 > Google Books > Open Library），并做了书名相似度校验，避免串书：
 
@@ -141,7 +170,7 @@ Node 自带的 `fetch` 便会走代理；同时把 `douban.com / doubanio.com / 
 
 ---
 
-## 四、部署到云端 Ubuntu
+## 五、部署到云端 Ubuntu
 
 完整步骤见 **[deploy/README-ubuntu.md](deploy/README-ubuntu.md)**，配套 systemd 单元 [deploy/booknest.service](deploy/booknest.service)。要点：
 
@@ -165,7 +194,7 @@ sudo systemctl enable --now booknest
 
 - 页面「设置 → 数据源」里也能看到 **封面文字识别引擎 / 运行环境 / 访问密码** 三项状态。
 
-## 五、数据与备份
+## 六、数据与备份
 
 | 路径 | 内容 |
 | --- | --- |
@@ -179,7 +208,7 @@ sudo systemctl enable --now booknest
 
 ---
 
-## 六、目录结构
+## 七、目录结构
 
 ```
 booknest/
@@ -193,7 +222,7 @@ booknest/
 │   ├── autocat.js           自动分类关键词规则（14 个内置大类）
 │   ├── isbn.js              ISBN-10/13 校验与互转
 │   ├── util.js              抓取超时、HTML 清洗、CSV 等工具
-│   └── providers/           豆瓣 / 微信读书 / Google Books+OpenLibrary / 聚合降级
+│   └── providers/           豆瓣 / 微信读书 / Google Books+OpenLibrary / 聚合降级；movie.js 影片多源
 ├── deploy/                  云端部署：README-ubuntu.md（步骤）+ booknest.service（systemd）
 ├── public/                  PWA 前端（原生 JS，无框架）
 │   ├── index.html  style.css  app.js  scanner.js  sw.js  manifest.webmanifest
@@ -201,10 +230,10 @@ booknest/
 └── data/                    db.json + covers/
 ```
 
-## 七、接口速查（自用/二次开发）
+## 八、接口速查（自用/二次开发）
 
 ```
-GET    /api/bootstrap                 一次性返回书籍、分类、标签、统计、数据源状态
+GET    /api/bootstrap                 一次性返回书籍、影片、分类、标签、书单/片单、统计、数据源状态
 POST   /api/lookup   {isbn|title|source+sourceId,force} 抓取书目元数据（带缓存与降级）
 GET    /api/search?q=                 按书名搜索候选（豆瓣 + 微信读书）
 GET    /api/author-books?name=        作者/译者的全部作品（豆瓣作者接口 + 微信读书 + Open Library，标记"已在书架"，缓存 3 天）
@@ -225,6 +254,18 @@ PATCH  /api/booklists/:id             改名 / 说明 / 颜色 / 排序方式 so
 DELETE /api/booklists/:id             删除书单（不影响书）
 POST   /api/booklists/:id/books       往书单加书 {bookIds:[]}（重复与不存在自动跳过）
 POST   /api/booklists/:id/books/remove 从书单移出 {bookIds:[]}
+GET    /api/movie-search?q=           影片搜索（豆瓣 + IMDb，配了 Key 还有 TMDb），缓存 7 天
+POST   /api/movie-lookup  {source,sourceId|title,year,force}  抓取影片详情（含豆瓣推荐 12 部），缓存 14 天
+GET    /api/movies/:id/related        相似与推荐（豆瓣"看过这部的人也喜欢"，自动排除已有），缓存 3 天
+POST   /api/movies                    加入片库（同条目重复返回 409 + 已有影片），海报自动本地化
+PATCH  /api/movies/:id                改任意字段（改状态为看过会记录 watchedAt）
+DELETE /api/movies/:id                删除影片（同时从所有片单移出，删除本地海报）
+GET    /api/movie-lists               片单列表（含 看过/共 进度统计）
+POST   /api/movie-lists               新建片单 {name,description,color,sort}
+PATCH  /api/movie-lists/:id           改名 / 说明 / 颜色 / 排序方式
+DELETE /api/movie-lists/:id           删除片单（不影响影片）
+POST   /api/movie-lists/:id/movies    往片单加片 {movieIds:[]}
+POST   /api/movie-lists/:id/movies/remove  从片单移出 {movieIds:[]}
 POST   /api/auto-categorize           给未分类的书套用自动分类
 GET    /api/cover?src=                带 Referer 与磁盘缓存的封面代理（仅放行图床白名单）
 POST   /api/providers/check           重新探测海外数据源

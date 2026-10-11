@@ -57,6 +57,8 @@ function seedDb() {
     })),
     tags: DEFAULT_TAGS.map((t) => ({ id: uid('t_'), name: t.name, color: t.color, createdAt: now })),
     booklists: [],
+    movies: [],
+    movieLists: [],
     cache: {},
     settings: { defaultStatus: 'wish', autoCategoryOnCreate: true },
   };
@@ -101,6 +103,8 @@ function load() {
         categories: Array.isArray(parsed.categories) && parsed.categories.length ? parsed.categories : seedDb().categories,
         tags: Array.isArray(parsed.tags) ? parsed.tags : [],
         booklists: Array.isArray(parsed.booklists) ? parsed.booklists.map(normalizeBooklistShape) : [],
+        movies: Array.isArray(parsed.movies) ? parsed.movies : [],
+        movieLists: Array.isArray(parsed.movieLists) ? parsed.movieLists.map(normalizeMovieListShape) : [],
         cache: parsed.cache && typeof parsed.cache === 'object' ? parsed.cache : {},
       };
       const migrated = migrateIds();
@@ -418,6 +422,8 @@ function wipe() {
   db.categories = fresh.categories;
   db.tags = [];
   db.booklists = [];
+  db.movies = [];
+  db.movieLists = [];
   db.cache = {};
   save(true);
   return { ok: true };
@@ -655,6 +661,314 @@ function booklistView(list, opts = {}) {
   return out;
 }
 
+/* ---------------- 电影 / 剧集 ---------------- */
+
+const MOVIE_STATUSES = {
+  wish: { key: 'wish', label: '想看', color: '#f59e0b' },
+  watching: { key: 'watching', label: '在看', color: '#0ea5e9' },
+  watched: { key: 'watched', label: '看过', color: '#16a34a' },
+  dropped: { key: 'dropped', label: '弃看', color: '#94a3b8' },
+};
+
+const MOVIE_LIST_SORTS = {
+  'added-desc': '最近加入',
+  'added-asc': '最早加入',
+  'rating-desc': '评分高→低',
+  'myrating-desc': '我的评分高→低',
+  'title-asc': '片名 A→Z',
+  'director-asc': '导演 A→Z',
+  'year-desc': '年份新→旧',
+  'year-asc': '年份旧→新',
+  'status-asc': '按观看状态',
+};
+
+function coerceList(v) {
+  if (Array.isArray(v)) return unique(v.map((x) => String(x).trim()).filter(Boolean));
+  if (typeof v === 'string') return unique(v.split(/[\/,，;；|]/).map((x) => x.trim()).filter(Boolean));
+  return [];
+}
+
+function normalizeMovieInput(input = {}, base = {}) {
+  const now = nowIso();
+  const status = MOVIE_STATUSES[input.status] ? input.status : base.status || 'wish';
+  const pickStr = (k) => String(input[k] != null ? input[k] : base[k] || '').trim();
+  const pickArr = (k) => (input[k] != null ? coerceList(input[k]) : base[k] || []);
+  const poster = pickStr('poster');
+  const posterRemote = pickStr('posterRemote');
+  // 远端海报 URL 统一挪到 posterRemote，poster 只存本地路径（由本地化逻辑回填）
+  const isRemote = (u) => /^https?:\/\//i.test(u);
+  const finalRemote = posterRemote || (isRemote(poster) ? poster : '');
+  const finalPoster = isRemote(poster) ? '' : poster || base.poster || '';
+  return {
+    ...base,
+    id: base.id || uid('m_'),
+    title: pickStr('title') || '未命名影片',
+    originalTitle: pickStr('originalTitle'),
+    year: pickStr('year'),
+    type: input.type === 'tv' || base.type === 'tv' ? 'tv' : 'movie',
+    directors: pickArr('directors'),
+    actors: pickArr('actors'),
+    genres: pickArr('genres'),
+    countries: pickArr('countries'),
+    languages: pickArr('languages'),
+    durations: pickArr('durations'),
+    releaseDates: pickArr('releaseDates'),
+    aka: pickArr('aka'),
+    poster: finalPoster,
+    posterRemote: finalRemote,
+    summary: clampText(String(input.summary != null ? input.summary : base.summary || ''), 6000),
+    rating: Number(input.rating != null ? input.rating : base.rating) || 0,
+    ratingCount: Number(input.ratingCount != null ? input.ratingCount : base.ratingCount) || 0,
+    ratingLabel: pickStr('ratingLabel'),
+    source: pickStr('source'),
+    sourceId: pickStr('sourceId'),
+    sourceUrl: pickStr('sourceUrl'),
+    episodes: Number(input.episodes != null ? input.episodes : base.episodes) || 0,
+    status,
+    tags: input.tags != null ? unique(input.tags.map(String)) : base.tags || [],
+    myRating: Number(input.myRating != null ? input.myRating : base.myRating) || 0,
+    note: clampText(String(input.note != null ? input.note : base.note || ''), 4000),
+    watchedAt:
+      status === 'watched' && !base.watchedAt
+        ? now
+        : String(input.watchedAt != null ? input.watchedAt : base.watchedAt || ''),
+    addedAt: base.addedAt || now,
+    updatedAt: now,
+  };
+}
+
+function listMovies() {
+  return getDb().movies.slice();
+}
+function getMovie(id) {
+  return getDb().movies.find((m) => m.id === id) || null;
+}
+function findMovieBySource(source, sourceId) {
+  if (!sourceId) return null;
+  return getDb().movies.find((m) => m.source === source && m.sourceId === String(sourceId)) || null;
+}
+function addMovie(input) {
+  const movie = normalizeMovieInput(input);
+  getDb().movies.push(movie);
+  save(true);
+  return movie;
+}
+function updateMovie(id, patch) {
+  const d = getDb();
+  const idx = d.movies.findIndex((m) => m.id === id);
+  if (idx < 0) throw new Error('影片不存在');
+  const movie = normalizeMovieInput(patch, d.movies[idx]);
+  if (patch.status && patch.status !== d.movies[idx].status && patch.status === 'watched') {
+    movie.watchedAt = patch.watchedAt || nowIso();
+  }
+  d.movies[idx] = movie;
+  save(true);
+  return movie;
+}
+function deleteMovie(id) {
+  const d = getDb();
+  d.movies = d.movies.filter((m) => m.id !== id);
+  for (const l of d.movieLists || []) l.items = l.items.filter((i) => i.movieId !== id);
+  for (const ext of IMAGE_EXTS) {
+    const f = path.join(COVER_DIR, `${id}${ext}`);
+    if (fs.existsSync(f)) fs.unlinkSync(f);
+  }
+  save(true);
+  return { ok: true };
+}
+
+function movieStats() {
+  const d = getDb();
+  const byStatus = {};
+  for (const k of Object.keys(MOVIE_STATUSES)) byStatus[k] = 0;
+  const byGenre = {};
+  const byTag = {};
+  let ratingSum = 0;
+  let ratingCount = 0;
+  for (const m of d.movies) {
+    byStatus[m.status] = (byStatus[m.status] || 0) + 1;
+    for (const g of m.genres || []) byGenre[g] = (byGenre[g] || 0) + 1;
+    for (const t of m.tags || []) byTag[t] = (byTag[t] || 0) + 1;
+    if (m.myRating) {
+      ratingSum += m.myRating;
+      ratingCount += 1;
+    }
+  }
+  const tags = getDb().tags || [];
+  return {
+    total: d.movies.length,
+    byStatus,
+    statuses: MOVIE_STATUSES,
+    byGenre: Object.entries(byGenre)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count),
+    byTag: Object.entries(byTag)
+      .map(([id, count]) => ({ id, name: (tags.find((t) => t.id === id) || {}).name || '未知标签', color: (tags.find((t) => t.id === id) || {}).color || '#94a3b8', count }))
+      .sort((a, b) => b.count - a.count),
+    avgMyRating: ratingCount ? Math.round((ratingSum / ratingCount) * 10) / 10 : 0,
+    ratedCount: ratingCount,
+  };
+}
+
+/* 片单（与书单同构） */
+
+function normalizeMovieListShape(raw) {
+  const now = nowIso();
+  const items = [];
+  const seen = new Set();
+  const push = (movieId, addedAt) => {
+    if (!movieId || seen.has(movieId)) return;
+    seen.add(movieId);
+    items.push({ movieId: String(movieId), addedAt: addedAt || now });
+  };
+  if (Array.isArray(raw.items)) {
+    for (const it of raw.items) {
+      if (!it) continue;
+      if (typeof it === 'string') push(it, now);
+      else push(it.movieId, it.addedAt);
+    }
+  } else if (Array.isArray(raw.movieIds)) {
+    for (const id of raw.movieIds) push(id, now);
+  }
+  return {
+    id: raw.id || uid('ml_'),
+    name: String(raw.name || '未命名片单').trim(),
+    description: String(raw.description || '').trim(),
+    color: raw.color || '#7c3aed',
+    sort: MOVIE_LIST_SORTS[raw.sort] ? raw.sort : 'added-desc',
+    items,
+    createdAt: raw.createdAt || now,
+    updatedAt: raw.updatedAt || now,
+  };
+}
+
+function listMovieLists() {
+  return (getDb().movieLists || []).slice().sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+}
+function getMovieList(id) {
+  return (getDb().movieLists || []).find((l) => l.id === id) || null;
+}
+function findMovieListByName(name) {
+  const t = String(name || '').trim();
+  return t ? (getDb().movieLists || []).find((l) => l.name === t) || null : null;
+}
+function addMovieList({ name, description, color, sort }) {
+  const clean0 = String(name || '').trim();
+  if (!clean0) throw new Error('片单名不能为空');
+  const d = getDb();
+  if ((d.movieLists || []).some((l) => l.name === clean0)) throw new Error('已有同名片单');
+  const now = nowIso();
+  const item = {
+    id: uid('ml_'),
+    name: clean0,
+    description: String(description || '').trim(),
+    color: color || '#7c3aed',
+    sort: MOVIE_LIST_SORTS[sort] ? sort : 'added-desc',
+    items: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  d.movieLists.push(item);
+  save(true);
+  return item;
+}
+function updateMovieList(id, patch) {
+  const d = getDb();
+  const item = (d.movieLists || []).find((l) => l.id === id);
+  if (!item) throw new Error('片单不存在');
+  if (patch.name != null) {
+    const name = String(patch.name).trim();
+    if (!name) throw new Error('片单名不能为空');
+    if (d.movieLists.some((l) => l.name === name && l.id !== id)) throw new Error('已有同名片单');
+    item.name = name;
+  }
+  if (patch.description != null) item.description = String(patch.description).trim();
+  if (patch.color) item.color = patch.color;
+  if (patch.sort && MOVIE_LIST_SORTS[patch.sort]) item.sort = patch.sort;
+  item.updatedAt = nowIso();
+  save(true);
+  return item;
+}
+function deleteMovieList(id) {
+  const d = getDb();
+  d.movieLists = (d.movieLists || []).filter((l) => l.id !== id);
+  save(true);
+  return { ok: true };
+}
+function addMoviesToMovieList(id, movieIds) {
+  const list = getMovieList(id);
+  if (!list) throw new Error('片单不存在');
+  const have = new Set(list.items.map((i) => i.movieId));
+  const now = nowIso();
+  let added = 0;
+  let skipped = 0;
+  for (const raw of movieIds || []) {
+    const mid = String(raw || '');
+    if (!mid || have.has(mid) || !getMovie(mid)) {
+      skipped += 1;
+      continue;
+    }
+    list.items.push({ movieId: mid, addedAt: now });
+    have.add(mid);
+    added += 1;
+  }
+  list.updatedAt = now;
+  save(true);
+  return { ok: true, added, skipped, total: list.items.length };
+}
+function removeMoviesFromMovieList(id, movieIds) {
+  const list = getMovieList(id);
+  if (!list) throw new Error('片单不存在');
+  const set = new Set((movieIds || []).map(String));
+  const before = list.items.length;
+  list.items = list.items.filter((i) => !set.has(i.movieId));
+  list.updatedAt = nowIso();
+  save(true);
+  return { ok: true, removed: before - list.items.length, total: list.items.length };
+}
+function movieListStats(list) {
+  const counts = { wish: 0, watching: 0, watched: 0, dropped: 0 };
+  let ratingSum = 0;
+  let rated = 0;
+  for (const it of (list && list.items) || []) {
+    const m = getMovie(it.movieId);
+    if (!m) continue;
+    counts[m.status] = (counts[m.status] || 0) + 1;
+    if (m.myRating) {
+      ratingSum += m.myRating;
+      rated += 1;
+    }
+  }
+  const total = ((list && list.items) || []).length;
+  const watched = counts.watched || 0;
+  return {
+    total,
+    watched,
+    watching: counts.watching || 0,
+    wish: counts.wish || 0,
+    dropped: counts.dropped || 0,
+    unwatched: total - watched,
+    progress: total ? Math.round((watched / total) * 100) : 0,
+    label: `${watched}/${total}`,
+    avgMyRating: rated ? Math.round((ratingSum / rated) * 10) / 10 : 0,
+  };
+}
+function movieListView(list, opts = {}) {
+  const out = {
+    id: list.id,
+    name: list.name,
+    description: list.description,
+    color: list.color,
+    sort: list.sort,
+    createdAt: list.createdAt,
+    updatedAt: list.updatedAt,
+    items: list.items.map((i) => ({ movieId: i.movieId, addedAt: i.addedAt })),
+    stats: movieListStats(list),
+  };
+  if (opts.movieIds) out.movieIds = list.items.map((i) => i.movieId);
+  return out;
+}
+
 /* ---------------- 封面本地化 ---------------- */
 
 function refererFor(url) {
@@ -665,7 +979,12 @@ function refererFor(url) {
       return '';
     }
   })();
-  if (/doubanio\.com|douban\.com/.test(host)) return 'https://book.douban.com/';
+  if (/doubanio\.com|douban\.com/.test(host)) {
+    // 电影海报路径是 /view/photo/，书籍封面是 /view/subject/
+    return /\/view\/photo\//.test(url) ? 'https://movie.douban.com/' : 'https://book.douban.com/';
+  }
+  if (/media-amazon\.com/.test(host)) return 'https://www.imdb.com/';
+  if (/tmdb\.org/.test(host)) return 'https://www.themoviedb.org/';
   if (/weread\.qq\.com|qq\.com/.test(host)) return 'https://weread.qq.com/';
   return '';
 }
@@ -774,6 +1093,8 @@ const ALLOWED_IMAGE_HOSTS = [
   'douban.com',
   'weread.qq.com',
   'cdn.weread.qq.com',
+  'media-amazon.com',
+  'image.tmdb.org',
   'books.google.com',
   'books.googleusercontent.com',
   'googleusercontent.com',
@@ -885,6 +1206,24 @@ module.exports = {
   booklistView,
   normalizeBooklistShape,
   BOOKLIST_SORTS,
+  MOVIE_STATUSES,
+  MOVIE_LIST_SORTS,
+  listMovies,
+  getMovie,
+  addMovie,
+  updateMovie,
+  deleteMovie,
+  findMovieBySource,
+  movieStats,
+  listMovieLists,
+  getMovieList,
+  findMovieListByName,
+  addMovieList,
+  updateMovieList,
+  deleteMovieList,
+  addMoviesToMovieList,
+  removeMoviesFromMovieList,
+  movieListView,
   listBooks,
   getBook,
   findBookByIsbn,

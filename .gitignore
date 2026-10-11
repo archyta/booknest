@@ -20,3 +20,8 @@ tmp-*
 node_modules/
 .env
 .env.*
+
+# 备份包（含个人书库数据，绝不入库）
+*.tar.gz
+booknest-backup-*
+*.zip

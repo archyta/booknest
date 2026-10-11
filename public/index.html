@@ -20,6 +20,10 @@
     <div class="topbar-row">
       <h1 class="brand">📚 书巢 <small id="shelfCount"></small></h1>
       <div class="spacer"></div>
+      <div class="mode-switch" id="modeSwitch">
+        <button data-mode="book" class="on">书</button>
+        <button data-mode="movie">影</button>
+      </div>
       <button class="icon-btn" id="btnViewMode" title="切换网格 / 列表">▦</button>
     </div>
     <div class="searchbox">
@@ -39,8 +43,7 @@
         <option value="rating-desc">评分高→低</option>
         <option value="pubdate-desc">出版时间新→旧</option>
       </select>
-    </div>
-  </header>
+    </div>  </header>
 
   <main id="view"></main>
 
@@ -124,6 +127,33 @@
     <button data-close>关闭</button>
   </div>
   <div class="sheet-body" id="bookSheetBody"></div>
+</section>
+
+<!-- 影片搜索 / 添加 -->
+<section class="sheet" id="sheetMovieSearch">
+  <div class="sheet-head">
+    <h2>添加影片</h2>
+    <button data-close>关闭</button>
+  </div>
+  <div class="sheet-body" id="movieSearchBody"></div>
+</section>
+
+<!-- 影片详情 -->
+<section class="sheet full" id="sheetMovie">
+  <div class="sheet-head">
+    <h2 id="movieSheetTitle">影片详情</h2>
+    <button data-close>关闭</button>
+  </div>
+  <div class="sheet-body" id="movieSheetBody"></div>
+</section>
+
+<!-- 片单选片 -->
+<section class="sheet" id="sheetMovieListPick">
+  <div class="sheet-head">
+    <h2 id="movieListPickTitle">选择影片</h2>
+    <button data-close>取消</button>
+  </div>
+  <div class="sheet-body" id="movieListPickBody"></div>
 </section>
 
 <!-- 书单 -->

@@ -11,6 +11,7 @@ const crypto = require('crypto');
 
 const store = require('./store');
 const providers = require('./providers');
+const movie = require('./providers/movie');
 const ocr = require('./ocr');
 const auth = require('./auth');
 const isbnUtil = require('./isbn');
@@ -207,6 +208,11 @@ async function handleApi(req, res, url) {
       tags: store.listTags(),
       booklists: store.listBooklists().map((l) => store.booklistView(l, { bookIds: true })),
       booklistSorts: store.BOOKLIST_SORTS,
+      movies: store.listMovies(),
+      movieLists: store.listMovieLists().map((l) => store.movieListView(l, { movieIds: true })),
+      movieListSorts: store.MOVIE_LIST_SORTS,
+      movieStats: store.movieStats(),
+      movieStatuses: store.MOVIE_STATUSES,
       stats: store.stats(),
       statuses: store.STATUSES,
       settings: db.settings || {},
@@ -643,7 +649,197 @@ async function handleApi(req, res, url) {
     if (req.method === 'DELETE') return sendJson(res, 200, store.deleteTag(tagId));
   }
 
-  if (p === '/api/stats' && req.method === 'GET') return sendJson(res, 200, store.stats());
+  if (p === '/api/stats' && req.method === 'GET') {
+    return sendJson(res, 200, { ...store.stats(), movie: store.movieStats() });
+  }
+
+  /* ---------------- 电影 ---------------- */
+
+  if (p === '/api/movie-search' && req.method === 'GET') {
+    const keyword = String(q.get('q') || '').trim();
+    if (!keyword) return sendJson(res, 200, { results: [], sources: [] });
+    const key = `msearch:v1:${keyword.toLowerCase()}`;
+    const force = q.get('force') === '1';
+    const cached = store.cache.get(key);
+    if (!force && cached && Date.now() - cached.ts < 7 * 24 * 3600 * 1000) {
+      return sendJson(res, 200, { ...cached.data, cached: true });
+    }
+    try {
+      const tmdbKey = (store.getDb().settings || {}).tmdbApiKey || '';
+      const data = await movie.search(keyword, { tmdbKey });
+      store.cache.set(key, { ts: Date.now(), data });
+      return sendJson(res, 200, { ...data, cached: false });
+    } catch (err) {
+      return sendJson(res, 200, { results: [], sources: [], error: err.message || '搜索失败' });
+    }
+  }
+
+  if (p === '/api/movie-lookup' && (req.method === 'POST' || req.method === 'GET')) {
+    const body = req.method === 'POST' ? await readBody(req) : {};
+    const source = String(body.source || q.get('source') || '').trim();
+    const sourceId = String(body.sourceId || q.get('sourceId') || '').trim();
+    const title = String(body.title || q.get('title') || '').trim();
+    const year = String(body.year || q.get('year') || '').trim();
+    const force = body.force === true || q.get('force') === '1';
+    if (!sourceId && !title) return sendJson(res, 400, { error: '请提供片名或条目 id' });
+    const cacheKey = `mlookup:v1:${source}:${sourceId || title.toLowerCase()}`;
+    const cached = store.cache.get(cacheKey);
+    if (!force && cached && Date.now() - cached.ts < 14 * 24 * 3600 * 1000) {
+      const dup = cached.record.sourceId ? store.findMovieBySource(cached.record.source || 'douban', cached.record.sourceId) : null;
+      return sendJson(res, 200, { ...cached, cached: true, duplicate: dup || null });
+    }
+    try {
+      const settings = store.getDb().settings || {};
+      const result = await movie.lookup({
+        source,
+        sourceId,
+        title,
+        year,
+        tmdbKey: settings.tmdbApiKey || '',
+        omdbKey: settings.omdbApiKey || '',
+      });
+      store.cache.set(cacheKey, { ts: Date.now(), record: result.record, sources: result.sources });
+      const dup = result.record.sourceId ? store.findMovieBySource(result.record.source, result.record.sourceId) : null;
+      return sendJson(res, 200, { ...result, cached: false, duplicate: dup || null });
+    } catch (err) {
+      return sendJson(res, 502, { error: err.message || '抓取失败' });
+    }
+  }
+
+  if (p === '/api/movies' && req.method === 'POST') {
+    const body = await readBody(req);
+    const input = { ...body };
+    if (input.sourceId && input.source && !body.allowDuplicate) {
+      const dup = store.findMovieBySource(input.source, input.sourceId);
+      if (dup) return sendJson(res, 409, { error: '这部影片已经在片库里了', movie: dup });
+    }
+    const saved = store.addMovie(input);
+    if (saved.posterRemote && !saved.poster) {
+      const local = await store.localizeCover(saved.posterRemote, saved.id);
+      if (local) return sendJson(res, 201, { movie: store.updateMovie(saved.id, { poster: local }) });
+    }
+    return sendJson(res, 201, { movie: saved });
+  }
+
+  const movieMatch = p.match(/^\/api\/movies\/([^/]+)$/);
+  if (movieMatch) {
+    const id = decodeId(movieMatch[1]);
+    if (req.method === 'GET') {
+      const m = store.getMovie(id);
+      return m ? sendJson(res, 200, { movie: m }) : sendJson(res, 404, { error: '影片不存在' });
+    }
+    if (req.method === 'PATCH' || req.method === 'PUT') {
+      const body = await readBody(req);
+      try {
+        let updated = store.updateMovie(id, body);
+        if (updated.posterRemote && !updated.poster) {
+          const local = await store.localizeCover(updated.posterRemote, updated.id);
+          if (local) updated = store.updateMovie(updated.id, { poster: local });
+        }
+        return sendJson(res, 200, { movie: updated });
+      } catch (err) {
+        return sendJson(res, 404, { error: err.message });
+      }
+    }
+    if (req.method === 'DELETE') {
+      if (!store.getMovie(id)) return sendJson(res, 404, { error: '影片不存在' });
+      store.deleteMovie(id);
+      return sendJson(res, 200, { ok: true });
+    }
+  }
+
+  const movieRelatedMatch = p.match(/^\/api\/movies\/([^/]+)\/related$/);
+  if (movieRelatedMatch && req.method === 'GET') {
+    const m = store.getMovie(decodeId(movieRelatedMatch[1]));
+    if (!m) return sendJson(res, 404, { error: '影片不存在' });
+    const force = q.get('force') === '1';
+    const cacheKey = `mrel:v1:${m.source}:${m.sourceId || m.id}`;
+    const cached = store.cache.get(cacheKey);
+    let raw = null;
+    if (!force && cached && Date.now() - cached.ts < 3 * 24 * 3600 * 1000) {
+      raw = cached.data;
+    } else {
+      try {
+        let list = [];
+        if (m.source === 'douban' && m.sourceId) list = await movie.doubanRecommendations(m.sourceId, { count: 12 });
+        if (!list.length && m.title) {
+          const s = await movie.search(m.title, { tmdbKey: (store.getDb().settings || {}).tmdbApiKey || '' });
+          list = (s.results || []).map((r) => ({ ...r, reason: '相关影片' }));
+        }
+        raw = { candidates: list, queries: [m.title] };
+        store.cache.set(cacheKey, { ts: Date.now(), data: raw });
+      } catch (err) {
+        return sendJson(res, 200, { candidates: [], queries: [], error: err.message });
+      }
+    }
+    const norm = (s) => String(s || '').toLowerCase().replace(/[\s\-_:：·,，.。()（）\[\]【】《》]/g, '');
+    const ownedTitles = new Set(store.listMovies().map((x) => norm(x.title)));
+    const ownedIds = new Set(store.listMovies().map((x) => `${x.source}:${x.sourceId}`));
+    const candidates = (raw.candidates || [])
+      .filter((c) => {
+        if (c.sourceId && ownedIds.has(`${c.source}:${c.sourceId}`)) return false;
+        if (ownedTitles.has(norm(c.title))) return false;
+        return true;
+      })
+      .slice(0, 12);
+    return sendJson(res, 200, { candidates, queries: raw.queries || [], cached: !!cached && !force });
+  }
+
+  /* 片单 */
+  if (p === '/api/movie-lists') {
+    if (req.method === 'GET') {
+      return sendJson(res, 200, {
+        movieLists: store.listMovieLists().map((l) => store.movieListView(l, { movieIds: true })),
+        sorts: store.MOVIE_LIST_SORTS,
+      });
+    }
+    if (req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const list = store.addMovieList(body);
+        if (Array.isArray(body.movieIds) && body.movieIds.length) store.addMoviesToMovieList(list.id, body.movieIds);
+        return sendJson(res, 201, { movieList: store.movieListView(store.getMovieList(list.id), { movieIds: true }) });
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+  }
+
+  const movieListMatch = p.match(/^\/api\/movie-lists\/([^/]+)$/);
+  if (movieListMatch) {
+    const id = decodeId(movieListMatch[1]);
+    if (req.method === 'GET') {
+      const l = store.getMovieList(id);
+      return l
+        ? sendJson(res, 200, { movieList: store.movieListView(l, { movieIds: true }) })
+        : sendJson(res, 404, { error: '片单不存在' });
+    }
+    if (req.method === 'PATCH') {
+      const body = await readBody(req);
+      try {
+        store.updateMovieList(id, body);
+        return sendJson(res, 200, { movieList: store.movieListView(store.getMovieList(id), { movieIds: true }) });
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+    if (req.method === 'DELETE') return sendJson(res, 200, store.deleteMovieList(id));
+  }
+
+  const movieListItemsMatch = p.match(/^\/api\/movie-lists\/([^/]+)\/movies(?:\/(remove))?$/);
+  if (movieListItemsMatch && req.method === 'POST') {
+    const id = decodeId(movieListItemsMatch[1]);
+    const isRemove = !!movieListItemsMatch[2];
+    const body = await readBody(req);
+    const ids = Array.isArray(body.movieIds) ? body.movieIds : body.movieId ? [body.movieId] : [];
+    try {
+      const result = isRemove ? store.removeMoviesFromMovieList(id, ids) : store.addMoviesToMovieList(id, ids);
+      return sendJson(res, 200, { ...result, movieList: store.movieListView(store.getMovieList(id), { movieIds: true }) });
+    } catch (err) {
+      return sendJson(res, 404, { error: err.message });
+    }
+  }
+
 
   if (p === '/api/export' && req.method === 'GET') {
     const format = (q.get('format') || 'json').toLowerCase();
