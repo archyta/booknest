@@ -723,6 +723,24 @@ function normalizeMovieInput(input = {}, base = {}) {
     source: pickStr('source'),
     sourceId: pickStr('sourceId'),
     sourceUrl: pickStr('sourceUrl'),
+    // 三方 id 与合并信息（豆瓣 / IMDb / TMDb）
+    doubanId: pickStr('doubanId'),
+    imdbId: pickStr('imdbId'),
+    tmdbId: pickStr('tmdbId'),
+    sourceUrls: input.sourceUrls && typeof input.sourceUrls === 'object' ? input.sourceUrls : base.sourceUrls || {},
+    writers: pickArr('writers'),
+    mergedFrom: input.mergedFrom != null ? coerceList(input.mergedFrom) : base.mergedFrom || [],
+    ratings: (() => {
+      const src = input.ratings != null ? input.ratings : base.ratings;
+      if (!src || typeof src !== 'object') return base.ratings || {};
+      const out = {};
+      for (const [k, v] of Object.entries(src)) {
+        const value = Number((v || {}).value) || 0;
+        if (!value) continue;
+        out[k] = { value, count: Number((v || {}).count) || 0 };
+      }
+      return out;
+    })(),
     episodes: Number(input.episodes != null ? input.episodes : base.episodes) || 0,
     status,
     tags: input.tags != null ? unique(input.tags.map(String)) : base.tags || [],

@@ -783,13 +783,14 @@ async function handleApi(req, res, url) {
       raw = cached.data;
     } else {
       try {
-        let list = [];
-        if (m.source === 'douban' && m.sourceId) list = await movie.doubanRecommendations(m.sourceId, { count: 12 });
+        // 合并三方推荐：豆瓣「看过这部的人也喜欢」+ TMDb 推荐 + TMDb 相似
+        const merged = await movie.related(m, { tmdbKey: tmdbKey() });
+        let list = merged.candidates || [];
         if (!list.length && m.title) {
           const s = await movie.search(m.title, { tmdbKey: tmdbKey() });
-          list = (s.results || []).map((r) => ({ ...r, reason: '相关影片' }));
+          list = (s.results || []).map((r) => ({ ...r, reason: '相关影片', sources: [r.sourceLabel], agree: 1 }));
         }
-        raw = { candidates: list, queries: [m.title] };
+        raw = { candidates: list, queries: [m.title], groups: merged.groups || [] };
         store.cache.set(cacheKey, { ts: Date.now(), data: raw });
       } catch (err) {
         return sendJson(res, 200, { candidates: [], queries: [], error: err.message });
@@ -805,7 +806,7 @@ async function handleApi(req, res, url) {
         return true;
       })
       .slice(0, 12);
-    return sendJson(res, 200, { candidates, queries: raw.queries || [], cached: !!cached && !force });
+    return sendJson(res, 200, { candidates, queries: raw.queries || [], groups: raw.groups || [], cached: !!cached && !force });
   }
 
   /* 片单 */

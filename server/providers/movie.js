@@ -93,11 +93,15 @@ async function doubanDetail(subjectId) {
     sourceLabel: '豆瓣',
     sourceId: id,
     sourceUrl: `https://movie.douban.com/subject/${id}/`,
+    doubanId: id,
+    imdbId: '',
+    tmdbId: '',
     title: clean(data.title),
     originalTitle: clean(data.original_title || ''),
     year: clean(String(data.year || '')),
     type: String(data.type || 'movie') === 'tv' ? 'tv' : 'movie',
     directors: unique((data.directors || []).map((d) => clean(d.name))),
+    writers: [],
     actors: unique((data.actors || []).map((a) => clean(a.name))).slice(0, 20),
     genres: unique((data.genres || []).map((g) => clean(g))),
     countries: unique((data.countries || []).map((c) => clean(c))),
@@ -110,6 +114,7 @@ async function doubanDetail(subjectId) {
     rating: Number(rating.value) || 0,
     ratingCount: Number(rating.count) || 0,
     ratingLabel: rating.value ? '豆瓣评分' : '',
+    ratings: rating.value ? { douban: { value: Number(rating.value) || 0, count: Number(rating.count) || 0 } } : {},
     episodes: Number(data.episodes_count) || 0,
   };
 }
@@ -198,11 +203,15 @@ async function omdbDetail(imdbId, apiKey) {
     sourceLabel: 'IMDb',
     sourceId: imdbId,
     sourceUrl: `https://www.imdb.com/title/${imdbId}/`,
+    imdbId,
+    doubanId: '',
+    tmdbId: '',
     title: clean(data.Title || ''),
     originalTitle: '',
     year: clean(String(data.Year || '')).slice(0, 4),
     type: /series/i.test(String(data.Type || '')) ? 'tv' : 'movie',
     directors: data.Director && data.Director !== 'N/A' ? data.Director.split(',').map((s) => clean(s)) : [],
+    writers: data.Writer && data.Writer !== 'N/A' ? data.Writer.split(',').map((s) => clean(s)) : [],
     actors: data.Actors && data.Actors !== 'N/A' ? data.Actors.split(',').map((s) => clean(s)) : [],
     genres: data.Genre && data.Genre !== 'N/A' ? data.Genre.split(',').map((s) => clean(s)) : [],
     countries: data.Country && data.Country !== 'N/A' ? data.Country.split(',').map((s) => clean(s)) : [],
@@ -215,6 +224,9 @@ async function omdbDetail(imdbId, apiKey) {
     rating: Number(data.imdbRating) || 0,
     ratingCount: Number(String(data.imdbVotes || '').replace(/,/g, '')) || 0,
     ratingLabel: data.imdbRating && data.imdbRating !== 'N/A' ? 'IMDb 评分' : '',
+    ratings: Number(data.imdbRating)
+      ? { imdb: { value: Number(data.imdbRating) || 0, count: Number(String(data.imdbVotes || '').replace(/,/g, '')) || 0 } }
+      : {},
   };
 }
 
@@ -264,11 +276,15 @@ function fromTmdbDetail(data, mediaType) {
   const crew = (data.credits && data.credits.crew) || [];
   const cast = (data.credits && data.credits.cast) || [];
   const prodCountries = unique((data.production_countries || []).map((c) => clean(c.name)));
+  const imdbId = String(data.imdb_id || (data.external_ids && data.external_ids.imdb_id) || '');
   return {
     source: 'tmdb',
     sourceLabel: 'TMDb',
     sourceId: `${isTv ? 'tv' : 'movie'}/${data.id}`,
     sourceUrl: `https://www.themoviedb.org/${isTv ? 'tv' : 'movie'}/${data.id}`,
+    tmdbId: String(data.id),
+    imdbId,
+    doubanId: '',
     title: clean(data.title || data.name || ''),
     originalTitle: clean(data.original_title || data.original_name || ''),
     year: String(data.release_date || data.first_air_date || '').slice(0, 4),
@@ -276,6 +292,9 @@ function fromTmdbDetail(data, mediaType) {
     directors: unique(
       crew.filter((c) => c.job === 'Director' || (isTv && /Creator|Director/.test(c.job || ''))).map((c) => clean(c.name))
     ).slice(0, 4),
+    writers: unique(
+      crew.filter((c) => /Writer|Screenplay|Story|Creator/i.test(c.job || '')).map((c) => clean(c.name))
+    ).slice(0, 6),
     actors: unique(cast.map((c) => clean(c.name))).slice(0, 20),
     genres: unique((data.genres || []).map((g) => clean(g.name))),
     // 有制片国家就用全称，否则退回 ISO 国家码，避免「美国 / US」这种重复
@@ -289,6 +308,9 @@ function fromTmdbDetail(data, mediaType) {
     rating: data.vote_average ? Math.round(data.vote_average * 10) / 10 : 0,
     ratingCount: data.vote_count || 0,
     ratingLabel: data.vote_average ? 'TMDb 评分' : '',
+    ratings: data.vote_average
+      ? { tmdb: { value: Math.round(data.vote_average * 10) / 10, count: data.vote_count || 0 } }
+      : {},
     episodes: isTv ? Number(data.number_of_episodes) || 0 : 0,
   };
 }
@@ -297,25 +319,249 @@ async function tmdbDetail(sourceId, apiKey) {
   const [mediaType, id] = String(sourceId || '').split('/');
   if (!/^\d+$/.test(String(id || ''))) throw new Error('TMDb id 无效');
   const data = await tmdbGet(`/${mediaType === 'tv' ? 'tv' : 'movie'}/${id}`, apiKey, {
-    append_to_response: 'credits,recommendations,similar',
+    append_to_response: 'credits,recommendations,similar,external_ids',
   });
   const record = fromTmdbDetail(data, mediaType);
-  const recs = []
-    .concat((data.recommendations && data.recommendations.results) || [])
-    .concat((data.similar && data.similar.results) || []);
-  record.recommendations = recs.slice(0, 12).map((it) => ({
+  // TMDb 提供两路"相似"信号，分别标注来源，便于和豆瓣的推荐交叉比对
+  const recs = ((data.recommendations && data.recommendations.results) || []).map((it) => ({ it, reason: 'TMDb 推荐' }));
+  const sims = ((data.similar && data.similar.results) || []).map((it) => ({ it, reason: 'TMDb 相似' }));
+  record.recommendations = [...recs, ...sims].slice(0, 24).map(({ it, reason }) => ({
     source: 'tmdb',
     sourceLabel: 'TMDb',
     sourceId: `${mediaType === 'tv' ? 'tv' : 'movie'}/${it.id}`,
+    tmdbId: String(it.id),
     title: clean(it.title || it.name || ''),
     year: String(it.release_date || it.first_air_date || '').slice(0, 4),
     genres: [],
     poster: it.poster_path ? TMDB_IMG + it.poster_path : '',
     rating: it.vote_average ? Math.round(it.vote_average * 10) / 10 : 0,
     ratingCount: it.vote_count || 0,
-    reason: 'TMDb 推荐',
+    reason,
   }));
   return record;
+}
+
+/* ---------------- 多源合并（豆瓣 > IMDb > TMDb） ---------------- */
+
+const SOURCE_RANK = { douban: 0, imdb: 1, tmdb: 2 };
+const isLatin = (s) => /^[\x00-\x7F\s]+$/.test(String(s || '')) && /[A-Za-z]{3}/.test(String(s || ''));
+
+function nonEmpty(v) {
+  if (Array.isArray(v)) return v.length > 0;
+  if (v && typeof v === 'object') return Object.keys(v).length > 0;
+  return !!(v && String(v).trim());
+}
+
+/**
+ * 合并同一部影片的多个来源记录：
+ *   列表类字段（导演/主演/类型/国家/时长/年份…）按 豆瓣 > IMDb > TMDb 取第一个非空；
+ *   编剧/别名等信息按同样顺序做并集（豆瓣通常没有编剧，靠 IMDb/TMDb 补）；
+ *   评分按来源分别保留；id 全部保留。
+ */
+function mergeRecords(records) {
+  const list = (records || []).filter(Boolean).slice().sort((a, b) => (SOURCE_RANK[a.source] ?? 9) - (SOURCE_RANK[b.source] ?? 9));
+  if (!list.length) return null;
+  const primary = list[0];
+
+  const prefer = (field, fallback = '') => {
+    for (const r of list) if (nonEmpty(r[field])) return r[field];
+    return fallback;
+  };
+  const union = (field) => {
+    const out = [];
+    for (const r of list) for (const v of r[field] || []) if (v && !out.includes(v)) out.push(v);
+    return out;
+  };
+
+  const ids = {};
+  for (const r of list) {
+    if (r.doubanId) ids.doubanId = r.doubanId;
+    if (r.imdbId) ids.imdbId = r.imdbId;
+    if (r.tmdbId) ids.tmdbId = r.tmdbId;
+    if (r.source === 'douban' && r.sourceId && !ids.doubanId) ids.doubanId = r.sourceId;
+    if (r.source === 'imdb' && r.sourceId && !ids.imdbId) ids.imdbId = r.sourceId;
+    if (r.source === 'tmdb' && r.sourceId && !ids.tmdbId) ids.tmdbId = String(r.sourceId).split('/').pop();
+  }
+
+  const ratings = {};
+  for (const r of list) for (const [k, v] of Object.entries(r.ratings || {})) if (v && v.value) ratings[k] = v;
+
+  const merged = {
+    source: primary.source,
+    sourceLabel: primary.sourceLabel,
+    sourceId: primary.sourceId,
+    ...ids,
+    title: prefer('title'),
+    originalTitle: prefer('originalTitle'),
+    year: prefer('year'),
+    type: list.some((r) => r.type === 'tv') && primary.type === 'tv' ? 'tv' : primary.type || prefer('type') || 'movie',
+    directors: union('directors'),
+    writers: union('writers'),
+    actors: prefer('actors', []).slice(0, 20),
+    genres: prefer('genres', []),
+    countries: prefer('countries', []),
+    languages: prefer('languages', []),
+    durations: prefer('durations', []),
+    releaseDates: prefer('releaseDates', []),
+    aka: union('aka').slice(0, 10),
+    poster: prefer('poster'),
+    summary: prefer('summary'),
+    rating: 0,
+    ratingCount: 0,
+    ratingLabel: '',
+    ratings,
+    episodes: Number(prefer('episodes', 0)) || 0,
+  };
+
+  // 主评分：按 豆瓣 > IMDb > TMDb 选第一个有分的
+  for (const key of ['douban', 'imdb', 'tmdb']) {
+    const r = ratings[key];
+    if (r && r.value) {
+      merged.rating = r.value;
+      merged.ratingCount = r.count || 0;
+      merged.ratingLabel = key === 'douban' ? '豆瓣评分' : key === 'imdb' ? 'IMDb 评分' : 'TMDb 评分';
+      break;
+    }
+  }
+
+  merged.sourceUrls = {};
+  if (ids.doubanId) merged.sourceUrls.douban = `https://movie.douban.com/subject/${ids.doubanId}/`;
+  if (ids.imdbId) merged.sourceUrls.imdb = `https://www.imdb.com/title/${ids.imdbId}/`;
+  if (ids.tmdbId) merged.sourceUrls.tmdb = `https://www.themoviedb.org/${merged.type === 'tv' ? 'tv' : 'movie'}/${ids.tmdbId}`;
+  merged.sourceUrl = merged.sourceUrls[primary.source] || Object.values(merged.sourceUrls)[0] || '';
+  merged.mergedFrom = list.map((r) => r.sourceLabel || r.source);
+  return merged;
+}
+
+/** 合并三个来源的推荐：按「被几个来源共同推荐」再按评分排序 */
+function mergeRecommendations(groups) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[\s\-_:：·,，.。()（）\[\]【】《》!！?？'"’“”]/g, '');
+  const map = new Map();
+  for (const { source, label, items } of groups) {
+    for (const it of items || []) {
+      if (!it || !it.title) continue;
+      const key = it.imdbId ? `tt:${it.imdbId}` : `${norm(it.title)}|${it.year || ''}`;
+      const hit = map.get(key);
+      if (hit) {
+        if (!hit.sources.includes(label)) hit.sources.push(label);
+        if (!hit.poster && it.poster) hit.poster = it.poster;
+        if (!hit.rating && it.rating) hit.rating = it.rating;
+        if (!hit.year && it.year) hit.year = it.year;
+        if (!hit.reason) hit.reason = it.reason || '';
+        hit.imdbId = hit.imdbId || it.imdbId || '';
+        hit.tmdbId = hit.tmdbId || it.tmdbId || '';
+        hit.doubanId = hit.doubanId || (it.source === 'douban' ? it.sourceId : '') || '';
+        if (it.source === 'douban' && it.sourceId) hit.sourceId = it.sourceId;
+      } else {
+        map.set(key, {
+          ...it,
+          sources: [label],
+          imdbId: it.imdbId || (/^tt\d+$/.test(it.sourceId || '') ? it.sourceId : ''),
+          tmdbId: it.source === 'tmdb' ? String(it.sourceId || '').split('/').pop() : it.tmdbId || '',
+          doubanId: it.source === 'douban' ? it.sourceId : it.doubanId || '',
+        });
+      }
+    }
+  }
+  // 排序：多源共同推荐 > 来源权重（豆瓣更可信）> 评分 > 评价人数（避免「1 票 10 分」的冷门片霸榜）
+  const SOURCE_WEIGHT = { 豆瓣: 2, 'TMDb 推荐': 1, 'TMDb 相似': 1 };
+  return [...map.values()]
+    .map((c) => {
+      const w = Math.max(...c.sources.map((s) => SOURCE_WEIGHT[s] || 1));
+      const popularity = Math.min(1, Math.log10((c.ratingCount || 0) + 1) / 6);
+      return {
+        ...c,
+        agree: c.sources.length,
+        score: Math.round((c.sources.length * 4 + w + (c.rating || 0) * 0.5 + popularity * 2) * 100) / 100,
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 16);
+}
+
+/* ---------------- 用别名反查 IMDb id（豆瓣 API 不提供） ---------------- */
+
+async function resolveImdbId({ title, originalTitle, aka, year }) {
+  const words = [originalTitle, ...(aka || []).filter(isLatin), isLatin(title) ? title : ''].filter(Boolean);
+  const queries = [];
+  for (const w of words) {
+    const t = String(w).trim();
+    if (t.length >= 3 && !queries.includes(t)) queries.push(t);
+    if (queries.length >= 2) break;
+  }
+  for (const q of queries) {
+    const list = await searchImdb(q).catch(() => []);
+    const hit = list.find(
+      (x) => /^tt\d+$/.test(x.sourceId) && (!year || !x.year || x.year === year) && similarity(x.title, q) >= 0.55
+    );
+    if (hit) return hit.sourceId;
+  }
+  return '';
+}
+
+async function tmdbFindByImdb(imdbId, apiKey) {
+  const data = await tmdbGet(`/find/${imdbId}`, apiKey, { external_source: 'imdb_id' });
+  const movie = (data.movie_results || [])[0];
+  const tv = (data.tv_results || [])[0];
+  if (movie) return tmdbDetail(`movie/${movie.id}`, apiKey);
+  if (tv) return tmdbDetail(`tv/${tv.id}`, apiKey);
+  return null;
+}
+
+/** 主来源不是豆瓣时，用片名去豆瓣找条目（限速，可能较慢） */
+async function doubanByTitle(title, year) {
+  const list = await searchDouban(title).catch(() => []);
+  const hit = list.find((x) => similarity(x.title, title) >= 0.75 && (!year || !x.year || x.year === year)) || list[0];
+  if (!hit || similarity(hit.title, title) < 0.5) return null;
+  try {
+    return await doubanDetail(hit.sourceId);
+  } catch (err) {
+    return null;
+  }
+}
+
+/** 给 promise 加超时，超时返回 null（不阻塞整体合并） */
+function withTimeout(promise, ms) {
+  return Promise.race([
+    Promise.resolve(promise).catch(() => null),
+    new Promise((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
+/**
+ * 已入库影片的"相似与推荐"：合并 豆瓣「看过这部的人也喜欢」+ TMDb 推荐 + TMDb 相似
+ * @param {object} record 已保存的影片记录（含 doubanId / imdbId / tmdbId / type）
+ */
+async function related(record, { tmdbKey } = {}) {
+  const groups = [];
+  const doubanId = record.doubanId || (record.source === 'douban' ? record.sourceId : '');
+  if (doubanId) {
+    const recs = await withTimeout(doubanRecommendations(doubanId, { count: 12 }), 12000);
+    if (recs && recs.length) groups.push({ source: 'douban', label: '豆瓣', items: recs });
+  }
+  if (tmdbKey) {
+    let tmdbRecord = null;
+    const tmdbId = record.tmdbId || (record.source === 'tmdb' ? String(record.sourceId || '').split('/').pop() : '');
+    try {
+      if (tmdbId) tmdbRecord = await tmdbDetail(`${record.type === 'tv' ? 'tv' : 'movie'}/${tmdbId}`, tmdbKey);
+      else if (record.imdbId) tmdbRecord = await tmdbFindByImdb(record.imdbId, tmdbKey);
+    } catch (err) {
+      tmdbRecord = null;
+    }
+    if (tmdbRecord && tmdbRecord.recommendations && tmdbRecord.recommendations.length) {
+      const byReason = new Map();
+      for (const it of tmdbRecord.recommendations) {
+        const key = it.reason || 'TMDb 推荐';
+        if (!byReason.has(key)) byReason.set(key, []);
+        byReason.get(key).push(it);
+      }
+      for (const [label, items] of byReason.entries()) groups.push({ source: 'tmdb', label, items });
+    }
+  }
+  return {
+    candidates: mergeRecommendations(groups),
+    groups: groups.map((g) => ({ label: g.label, count: g.items.length })),
+  };
 }
 
 /* ---------------- 搜索与详情聚合 ---------------- */
@@ -352,86 +598,139 @@ async function search(keyword, opts = {}) {
 async function lookup(query) {
   const { source, sourceId, title, year, tmdbKey, omdbKey } = query;
   const sources = [];
-  let record = null;
+  const collected = [];
+  const note = (key, label, ok, error) => sources.push({ key, label, ok, error: error || '' });
 
-  // 指定了源：直接取详情
-  if (source === 'douban' && sourceId) {
+  async function grab(key, label, fn) {
     try {
-      record = await doubanDetail(sourceId);
-      sources.push({ key: 'douban', label: '豆瓣', ok: true });
-    } catch (err) {
-      sources.push({ key: 'douban', label: '豆瓣', ok: false, error: err.message });
-    }
-  } else if (source === 'tmdb' && sourceId && tmdbKey) {
-    try {
-      record = await tmdbDetail(sourceId, tmdbKey);
-      sources.push({ key: 'tmdb', label: 'TMDb', ok: true });
-    } catch (err) {
-      sources.push({ key: 'tmdb', label: 'TMDb', ok: false, error: err.message });
-    }
-  } else if (source === 'imdb' && sourceId) {
-    try {
-      record = await omdbDetail(sourceId, omdbKey);
-      if (!record) {
-        const minimal = (await searchImdb(sourceId)).find((x) => x.sourceId === sourceId);
-        if (minimal) record = { ...minimal, actors: minimal.actors || [], summary: '' };
+      const r = await fn();
+      if (r) {
+        note(key, label, true);
+        return r;
       }
-      if (record) sources.push({ key: 'imdb', label: 'IMDb', ok: true });
-      else sources.push({ key: 'imdb', label: 'IMDb', ok: false, error: '未取到详情' });
+      note(key, label, false, '未取到数据');
     } catch (err) {
-      sources.push({ key: 'imdb', label: 'IMDb', ok: false, error: err.message });
+      note(key, label, false, err.message);
     }
+    return null;
   }
 
-  // 没给源（或指定源失败）：用标题搜，取最匹配的一条，再抓详情
-  if (!record && title) {
+  /* 1) 主来源：用户点的那一条（失败则用片名搜索兜底） */
+  let primary = null;
+  if (source === 'douban' && sourceId) primary = await grab('douban', '豆瓣', () => doubanDetail(sourceId));
+  else if (source === 'tmdb' && sourceId && tmdbKey) primary = await grab('tmdb', 'TMDb', () => tmdbDetail(sourceId, tmdbKey));
+  else if (source === 'imdb' && sourceId) {
+    primary = await grab('imdb', 'IMDb', async () => {
+      const full = await omdbDetail(sourceId, omdbKey);
+      if (full) return full;
+      const minimal = (await searchImdb(sourceId)).find((x) => x.sourceId === sourceId);
+      return minimal ? { ...minimal, actors: minimal.actors || [], summary: '' } : null;
+    });
+  }
+
+  if (!primary && title) {
     const { results } = await search(title, { tmdbKey });
     const scored = results
       .map((r) => ({ r, s: similarity(r.title, title) + (year && r.year === year ? 0.15 : 0) }))
       .sort((a, b) => b.s - a.s);
     const best = scored[0];
     if (best && best.s >= 0.5) {
-      if (best.r.source === 'douban') {
-        try {
-          record = await doubanDetail(best.r.sourceId);
-          sources.push({ key: 'douban', label: '豆瓣', ok: true });
-        } catch (err) {
-          record = best.r;
-          sources.push({ key: 'douban', label: '豆瓣', ok: false, error: err.message });
-        }
-      } else if (best.r.source === 'tmdb' && tmdbKey) {
-        try {
-          record = await tmdbDetail(best.r.sourceId, tmdbKey);
-          sources.push({ key: 'tmdb', label: 'TMDb', ok: true });
-        } catch (err) {
-          record = best.r;
-          sources.push({ key: 'tmdb', label: 'TMDb', ok: false, error: err.message });
-        }
-      } else {
+      if (best.r.source === 'douban') primary = await grab('douban', '豆瓣', () => doubanDetail(best.r.sourceId));
+      else if (best.r.source === 'tmdb' && tmdbKey) primary = await grab('tmdb', 'TMDb', () => tmdbDetail(best.r.sourceId, tmdbKey));
+      else {
         const full = await omdbDetail(best.r.sourceId, omdbKey);
-        record = full || best.r;
-        sources.push({ key: 'imdb', label: 'IMDb', ok: true });
+        primary = full || best.r;
+        note('imdb', 'IMDb', true);
       }
+      if (!primary) primary = best.r;
     }
   }
 
-  if (!record) throw new Error('没有找到这部影片');
+  if (!primary) throw new Error('没有找到这部影片');
+  collected.push(primary);
 
-  // 推荐列表
-  let recommendations = record.recommendations || [];
-  if (!recommendations.length && record.source === 'douban' && record.sourceId) {
-    recommendations = await doubanRecommendations(record.sourceId, { count: 12 }).catch(() => []);
+  /* 2) 补齐三方 id：豆瓣 API 不给 IMDb id，用别名去 IMDb 联想接口反查 */
+  let imdbId = primary.imdbId || '';
+  if (!imdbId) {
+    imdbId = await withTimeout(
+      resolveImdbId({ title: primary.title, originalTitle: primary.originalTitle, aka: primary.aka, year: primary.year }),
+      8000
+    );
+    if (imdbId) primary.imdbId = imdbId;
   }
-  // 用豆瓣补中文简介（IMDb/TMDb 来源时）
-  if (!recommendations.length && record.title && record.source !== 'douban') {
-    recommendations = [];
+  const tmdbId = primary.tmdbId || (primary.source === 'tmdb' ? String(primary.sourceId).split('/').pop() : '');
+  const doubanId = primary.doubanId || (primary.source === 'douban' ? primary.sourceId : '');
+
+  /* 3) 并行补齐其它来源（各自超时，失败不影响主来源） */
+  const tasks = [];
+  if (primary.source !== 'tmdb' && tmdbKey) {
+    tasks.push(
+      grab('tmdb', 'TMDb', () =>
+        tmdbId ? tmdbDetail(`${primary.type === 'tv' ? 'tv' : 'movie'}/${tmdbId}`, tmdbKey) : imdbId ? tmdbFindByImdb(imdbId, tmdbKey) : null
+      ).then((r) => r && collected.push(r))
+    );
   }
-  return { record: { ...record, recommendations }, sources };
+  if (primary.source !== 'imdb' && omdbKey && imdbId) {
+    tasks.push(grab('imdb', 'IMDb', () => omdbDetail(imdbId, omdbKey)).then((r) => r && collected.push(r)));
+  }
+  if (primary.source !== 'douban' && primary.title) {
+    tasks.push(
+      withTimeout(doubanByTitle(primary.title, primary.year), 15000).then((r) => {
+        if (r) {
+          note('douban', '豆瓣', true);
+          collected.push(r);
+        } else {
+          note('douban', '豆瓣', false, '豆瓣没有找到同名条目');
+        }
+      })
+    );
+  }
+  await Promise.allSettled(tasks);
+
+  /* 4) 合并基本信息（豆瓣 > IMDb > TMDb） */
+  const merged = mergeRecords(collected);
+
+  /* 5) 合并三方推荐 */
+  const groups = [];
+  const doubanRecord = collected.find((r) => r.source === 'douban');
+  const tmdbRecord = collected.find((r) => r.source === 'tmdb');
+  if (doubanRecord && doubanRecord.sourceId) {
+    const recs = await withTimeout(doubanRecommendations(doubanRecord.sourceId, { count: 12 }), 12000);
+    if (recs && recs.length) groups.push({ source: 'douban', label: '豆瓣', items: recs });
+  }
+  if (tmdbRecord && tmdbRecord.recommendations && tmdbRecord.recommendations.length) {
+    // 拆成两路信号：TMDb 推荐 / TMDb 相似
+    const byReason = new Map();
+    for (const it of tmdbRecord.recommendations) {
+      const key = it.reason || 'TMDb 推荐';
+      if (!byReason.has(key)) byReason.set(key, []);
+      byReason.get(key).push(it);
+    }
+    for (const [label, items] of byReason.entries()) groups.push({ source: 'tmdb', label, items });
+  }
+  const recommendations = mergeRecommendations(groups);
+  if (!recommendations.length && merged.title) {
+    const s = await withTimeout(search(merged.title, { tmdbKey }), 10000);
+    const fallback = ((s && s.results) || []).map((r) => ({ ...r, reason: '相关影片' }));
+    fallback.forEach((f) => {
+      f.sources = [f.sourceLabel];
+      f.agree = 1;
+    });
+    return { record: { ...merged, recommendations: fallback.slice(0, 12) }, sources };
+  }
+
+  return { record: { ...merged, recommendations }, sources };
 }
 
 module.exports = {
   search,
   lookup,
+  related,
+  mergeRecords,
+  mergeRecommendations,
+  resolveImdbId,
+  doubanByTitle,
+  tmdbFindByImdb,
   searchDouban,
   searchImdb,
   searchTmdb,

@@ -3607,6 +3607,32 @@
     if (state.movieDraft.isNew === false) ensureMovieRelated();
   }
 
+  /** 三方链接：有哪个 id 就给哪个链接 */
+  function movieLinks(m) {
+    const out = [];
+    const doubanId = m.doubanId || (m.source === 'douban' ? m.sourceId : '');
+    const tmdbId = m.tmdbId || (m.source === 'tmdb' ? String(m.sourceId || '').split('/').pop() : '');
+    if (doubanId) out.push(['豆瓣', `https://movie.douban.com/subject/${doubanId}/`]);
+    if (m.imdbId) out.push(['IMDb', `https://www.imdb.com/title/${m.imdbId}/`]);
+    if (tmdbId) out.push(['TMDb', `https://www.themoviedb.org/${m.type === 'tv' ? 'tv' : 'movie'}/${tmdbId}`]);
+    return out;
+  }
+
+  /** 三方评分全部展示（豆瓣 > IMDb > TMDb 的顺序） */
+  function movieRatingsLine(m) {
+    const labels = { douban: '豆瓣', imdb: 'IMDb', tmdb: 'TMDb' };
+    const ratings = m.ratings || {};
+    const parts = [];
+    for (const key of ['douban', 'imdb', 'tmdb']) {
+      const r = ratings[key];
+      if (r && r.value) parts.push(`<span class="rate-chip" data-src="${key}">${labels[key]} <b>${r.value}</b>${
+        r.count ? `<i>${r.count > 10000 ? (r.count / 10000).toFixed(1) + '万' : r.count}</i>` : ''
+      }</span>`);
+    }
+    if (!parts.length && m.rating) parts.push(`<span class="rate-chip" data-src="${m.source}"><b>${m.rating}</b></span>`);
+    return parts.join('');
+  }
+
   function movieSheetHtml() {
     const d = state.movieDraft;
     const m = d.movie;
@@ -3616,6 +3642,7 @@
     const related = state.movieRelated;
     const inLists = state.movieLists.filter((l) => (l.movieIds || []).includes(m.id));
     const sim = d.isNew ? [] : similarMovies(m);
+    const links = movieLinks(m);
 
     const info = (k, v) =>
       v ? `<div class="kv"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>` : '';
@@ -3637,16 +3664,21 @@
           <div class="line">${esc(
             [m.year, m.type === 'tv' ? '剧集' : '电影', runtime, (m.countries || []).join(' ')].filter(Boolean).join(' · ') || '—'
           )}</div>
-          ${m.rating ? `<div class="line" style="color:#fbbf24">★ ${m.rating} <span style="color:var(--text-mute)">${
-            esc(m.ratingLabel || '评分')
-          }${m.ratingCount ? ` · ${m.ratingCount} 人` : ''}</span></div>` : ''}
+          ${movieRatingsLine(m) ? `<div class="rate-row">${movieRatingsLine(m)}</div>` : ''}
           <div style="margin-top:6px">${(m.genres || []).map((g) => `<span class="genre-chip">${esc(g)}</span>`).join('')}</div>
           <div class="line" style="margin-top:6px">${esc((m.directors || []).join(' / ') || '')}${
             (m.actors || []).length ? ` <span style="color:var(--text-mute)">主演 ${esc(m.actors.slice(0, 4).join(' '))}</span>` : ''
           }</div>
-          ${m.sourceUrl ? `<div class="line"><a href="${esc(m.sourceUrl)}" target="_blank" rel="noopener" style="color:var(--brand)">在${
-            esc(m.sourceLabel || (m.source === 'douban' ? '豆瓣' : m.source === 'tmdb' ? 'TMDb' : 'IMDb'))
-          }查看 ↗</a></div>` : ''}
+          ${
+            links.length
+              ? `<div class="link-row">${links
+                  .map(
+                    ([label, url]) =>
+                      `<a class="link-chip" href="${esc(url)}" target="_blank" rel="noopener">${esc(label)} ↗</a>`
+                  )
+                  .join('')}</div>`
+              : ''
+          }
         </div>
       </div>
 
@@ -3734,6 +3766,7 @@
         </button>
         <div class="${d.showDetails === false ? 'hidden' : ''}" id="movieDetails">
           ${info('导演', (m.directors || []).join(' / '))}
+          ${info('编剧', (m.writers || []).join(' / '))}
           ${info('主演', (m.actors || []).join(' / '))}
           ${info('类型', (m.genres || []).join(' / '))}
           ${info('国家/地区', (m.countries || []).join(' / '))}
@@ -3741,7 +3774,16 @@
           ${info('片长', runtime)}
           ${info('上映日期', (m.releaseDates || []).join(' / '))}
           ${info('别名', (m.aka || []).join(' / '))}
-          ${info('IMDb / TMDb', m.source === 'douban' && m.sourceId ? `豆瓣 #${m.sourceId}` : m.sourceId || '')}
+          ${info('豆瓣', m.doubanId ? `#${m.doubanId}` : '')}
+          ${info('IMDb', m.imdbId || '')}
+          ${info('TMDb', m.tmdbId || '')}
+          ${
+            (m.mergedFrom || []).length > 1
+              ? `<div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-top:6px">基本信息由 ${esc(
+                  m.mergedFrom.join(' + ')
+                )} 合并（冲突以豆瓣为准）</div>`
+              : ''
+          }
           ${
             m.summary
               ? `<div class="summary" style="margin-top:10px"><div class="summary-title">剧情简介</div><p>${esc(m.summary)}</p></div>`
@@ -3772,7 +3814,7 @@
           ? `<div class="field"><label>相似与推荐 ${
               related && related.candidates && related.candidates.length ? `<span class="hint" style="font-weight:400">（${
                 related.candidates.length
-              } 部）</span>` : ''
+              } 部 · 豆瓣 + TMDb 合并，多源共同推荐排前面）</span>` : ''
             }</label>
             <div id="movieRelated">${
               related === null
@@ -3781,15 +3823,25 @@
                 ? `<div class="hint">${esc(related.error)}</div>`
                 : related && related.candidates && related.candidates.length
                 ? `<div class="sim-row">${related.candidates
-                    .map(
-                      (c) =>
-                        `<button class="sim-card" data-movie-add="${esc(c.source)}|${esc(c.sourceId)}|${esc(c.title)}|${esc(
-                          c.year || ''
-                        )}"><div class="cover">${c.poster ? `<img loading="lazy" src="${esc(c.poster)}" alt="">` : '🎬'}</div>
-                        <div class="t">${esc(c.title)}</div><div class="s">${esc(
-                          [c.year, c.rating ? `★${c.rating}` : '', c.reason || ''].filter(Boolean).join(' · ')
-                        )}</div></button>`
-                    )
+                    .map((c) => {
+                      const ref = c.doubanId
+                        ? ['douban', c.doubanId]
+                        : c.imdbId
+                        ? ['imdb', c.imdbId]
+                        : c.tmdbId
+                        ? ['tmdb', `${c.type === 'tv' ? 'tv' : 'movie'}/${c.tmdbId}`]
+                        : [c.source, c.sourceId];
+                      const badges = (c.sources || [c.sourceLabel]).join('+');
+                      return `<button class="sim-card" data-movie-add="${esc(ref[0])}|${esc(ref[1])}|${esc(c.title)}|${esc(
+                        c.year || ''
+                      )}"><div class="cover">${c.poster ? `<img loading="lazy" src="${esc(c.poster)}" alt="">` : '🎬'}${
+                        c.agree > 1 ? '<span class="agree">多源</span>' : ''
+                      }</div>
+                        <div class="t">${esc(c.title)}</div>
+                        <div class="s">${esc(
+                          [c.year, c.rating ? `★${c.rating}` : '', badges].filter(Boolean).join(' · ')
+                        )}</div></button>`;
+                    })
                     .join('')}</div>`
                 : '<div class="hint">暂时没有找到相似影片</div>'
             }</div>
