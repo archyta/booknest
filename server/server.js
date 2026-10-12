@@ -718,6 +718,14 @@ async function handleApi(req, res, url) {
 
   /* ---------------- 电影 ---------------- */
 
+  if (p === '/api/movie-providers/check' && (req.method === 'POST' || req.method === 'GET')) {
+    try {
+      return sendJson(res, 200, { sources: await movie.checkSources({ tmdbKey: tmdbKey() }) });
+    } catch (err) {
+      return sendJson(res, 200, { sources: [], error: err.message });
+    }
+  }
+
   if (p === '/api/movie-search' && req.method === 'GET') {
     const keyword = String(q.get('q') || '').trim();
     if (!keyword) return sendJson(res, 200, { results: [], sources: [] });

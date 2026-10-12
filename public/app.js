@@ -44,7 +44,8 @@
     movieFilters: { status: '', genre: '', tag: '', q: '', sort: 'added-desc' },
     movieDraft: null,
     movieRelated: null,
-    movieSearch: { q: '', results: [], sources: [], busy: false, error: '' },
+    movieSearch: { q: '', results: [], sources: [], sourceStatus: [], busy: false, error: '' },
+    movieSources: [],
     movieListPick: null,
     movieCurrentListId: '',
     creatingMovieList: false,
@@ -2088,7 +2089,9 @@
           <button class="btn sm" data-action="save-proxy">保存</button>
         </div>
         <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-top:6px">
-          保存后需重启服务生效（终端 Ctrl+C 后重新运行 <code>./start.sh</code>）；启动脚本会自动探测 7890 / 7897 等常见代理端口。
+          代理只在<strong>进程启动时</strong>生效，保存后需重启服务。<br>
+          用 <code>./start.sh</code> 启动时会自动读取这里保存的代理；<strong>用 systemd 部署时这里填了不生效</strong>，
+          需要在 <code>booknest.service</code> 里设置 <code>NODE_USE_ENV_PROXY=1</code> 与 <code>HTTPS_PROXY</code>（详见部署文档 §9.5）。
         </div>
         <div class="inline-form" style="margin-top:10px">
           <input type="text" id="googleKey" placeholder="${
@@ -2123,6 +2126,25 @@
           影片默认用豆瓣（中文片最全，无需 Key）+ IMDb 联想接口；填 TMDb Key 可补全海外片详情与推荐，
           填 OMDb Key 可用 IMDb 数据补全剧情与 IMDb 评分。云端部署可用环境变量
           <code>BOOKNEST_TMDB_KEY</code> / <code>BOOKNEST_OMDB_KEY</code> 注入，Key 就不会写进数据库。
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-head"><h3>影片数据源</h3><button class="btn sm ghost" data-action="check-movie-providers">重新检测</button></div>
+        <div class="src-list">
+          ${
+            (state.movieSources || []).length
+              ? state.movieSources
+                  .map(
+                    (p) => `<div class="row"><span class="led ${p.ok ? 'ok' : 'bad'}"></span>
+                      <b style="color:var(--text-dim)">${esc(p.label)}</b>
+                      <span>${
+                        p.ok ? `可用 · 命中 ${p.count} 条${p.ms ? ` · ${p.ms}ms` : ''}` : esc(p.error || '不可用')
+                      }</span>
+                    </div>`
+                  )
+                  .join('')
+              : '<div class="hint" style="font-size:12px">点「重新检测」查看豆瓣电影 / IMDb / TMDb 的可用性（TMDb 需要先填 API Key）</div>'
+          }
         </div>
       </div>
       <div class="section">
@@ -2214,7 +2236,8 @@
         else if (sheetId === 'sheetCover') state.cover = null;
         else if (sheetId === 'sheetListPick') state.listPick = null;
         else if (sheetId === 'sheetMovie') state.movieDraft = null;
-        else if (sheetId === 'sheetMovieSearch') state.movieSearch = { q: '', results: [], sources: [], busy: false, error: '' };
+        else if (sheetId === 'sheetMovieSearch')
+          state.movieSearch = { q: '', results: [], sources: [], sourceStatus: [], busy: false, error: '' };
         else if (sheetId === 'sheetMovieListPick') state.movieListPick = null;
       })
     );
@@ -3311,7 +3334,21 @@
       if (!el) return;
       const action = el.dataset.action;
       try {
-        if (action === 'check-providers') {
+        if (action === 'check-movie-providers') {
+          el.textContent = '检测中…';
+          try {
+            const res = await api('/api/movie-providers/check', { method: 'POST' });
+            state.movieSources = res.sources || [];
+            renderSettings();
+            const bad = state.movieSources.filter((x) => !x.ok);
+            toast(
+              bad.length ? `${bad.map((x) => x.label).join('、')} 不可用：${bad[0].error || '未知原因'}` : '影片数据源全部可用',
+              bad.length ? 'err' : undefined
+            );
+          } catch (err) {
+            toast(`检测失败：${err.message}`, 'err');
+          }
+        } else if (action === 'check-providers') {
           el.textContent = '检测中…';
           const res = await api('/api/providers/check', { method: 'POST' });
           state.providers = res.providers;
@@ -4007,7 +4044,7 @@
   /* ---- 影片搜索 ---- */
 
   function openMovieSearch(prefill) {
-    state.movieSearch = { q: prefill || '', results: [], sources: [], busy: false, error: '' };
+    state.movieSearch = { q: prefill || '', results: [], sources: [], sourceStatus: [], busy: false, error: '' };
     renderMovieSearch();
     openSheet('#sheetMovieSearch');
     setTimeout(() => {
@@ -4029,6 +4066,28 @@
       <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-bottom:8px">
         数据来自 豆瓣 + IMDb${state.settings.tmdbApiKeySet ? ' + TMDb' : ''}（在设置里可填 TMDb / OMDb Key 以获取更全的海外影片信息）；点一条即抓取详情
       </div>
+      ${
+        (s.sourceStatus || []).length
+          ? `<div class="src-status">${s.sourceStatus
+              .map(
+                (x) =>
+                  `<span class="src-pill ${x.ok ? 'ok' : 'bad'}" title="${esc(x.error || '')}">${
+                    x.ok ? '●' : '○'
+                  } ${esc(x.label)}${x.ok ? ` ${x.count}` : ''}</span>`
+              )
+              .join('')}</div>
+            ${
+              (s.sourceStatus || []).some((x) => !x.ok && x.error && x.error !== '没有匹配结果')
+                ? `<div class="hint" style="font-size:11px;color:#f59e0b;margin:-4px 0 8px">${esc(
+                    (s.sourceStatus || [])
+                      .filter((x) => !x.ok && x.error && x.error !== '没有匹配结果')
+                      .map((x) => `${x.label}：${x.error}`)
+                      .join('；')
+                  )}</div>`
+                : ''
+            }`
+          : ''
+      }
       ${
         s.error
           ? `<div class="hint" style="color:#f87171">${esc(s.error)}</div>`
@@ -4071,6 +4130,7 @@
       const res = await api(`/api/movie-search?q=${encodeURIComponent(q)}`);
       state.movieSearch.results = res.results || [];
       state.movieSearch.sources = res.sources || [];
+      state.movieSearch.sourceStatus = res.sourceStatus || [];
       state.movieSearch.error = res.error || '';
     } catch (err) {
       state.movieSearch.error = err.message;

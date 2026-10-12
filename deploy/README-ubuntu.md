@@ -169,6 +169,47 @@ tesseract --list-langs | grep chi_sim        # 有输出
 journalctl -u booknest -n 30 --no-pager      # 横幅里有 🔍 / 🔒 / 代码版本
 ```
 
+## 9.5 海外数据源（TMDb / Google Books）的代理
+
+**关键点：代理只在进程启动时读环境变量，运行时改设置页无效**（实测 Node 24/26：
+脚本内改 `process.env` 不生效，必须在启动前设好）。
+
+- 用 `./start.sh` 启动：会读取设置页保存的代理并注入环境变量 ✓
+- **用 systemd 启动：不会执行 start.sh，必须在服务单元里设置**，否则设置页填的代理等于没填：
+
+```bash
+sudo systemctl edit --full booknest      # 或直接编辑 /etc/systemd/system/booknest.service
+```
+
+```ini
+Environment=NODE_USE_ENV_PROXY=1
+Environment=HTTPS_PROXY=http://127.0.0.1:7890     # 换成这台服务器上真实可用的代理
+Environment=HTTP_PROXY=http://127.0.0.1:7890
+Environment=NO_PROXY=localhost,127.0.0.1,::1,douban.com,doubanio.com,qq.com,wechat.com,weread.qq.com
+```
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl restart booknest
+curl -s localhost:8788/api/bootstrap     # 登录后看 server.proxy.active 是否为 true
+```
+
+**注意**：`127.0.0.1:7890` 是开发机上的代理。如果这台云服务器上没有跑同一个代理，
+填了反而更糟（所有海外请求都会失败）。先确认服务器能不能直连：
+
+```bash
+curl -s -o /dev/null -w "tmdb 直连 %{http_code}\n" "https://api.themoviedb.org/3/movie/27205?api_key=你的Key"
+```
+
+返回 401（key 无效提示）或 200 都算通；超时/000 才需要代理。
+
+配好之后在页面「设置 → 影片数据源 → 重新检测」应看到：
+
+```
+● 豆瓣电影  可用
+● IMDb     可用
+● TMDb     可用
+```
+
 ## 10. 排错：更新代码后没生效（最常见）
 
 现象：`git pull` 了、`systemctl restart` 也返回成功，但功能/数据还是旧的

@@ -28,8 +28,16 @@ Environment=BOOKNEST_PASSWORD=change-me-please
 # Environment=BOOKNEST_TESSERACT_LANGS=chi_sim
 # Environment=BOOKNEST_TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 
-# —— 服务器在中国大陆时，用它代理访问 Google Books / Open Library ——
-# Environment=BOOKNEST_PROXY=http://127.0.0.1:7890
+# —— 海外数据源代理（TMDb / IMDb / Google Books / Open Library）——
+# 【重要】代理只在进程启动时读取环境变量，systemd 部署不会执行 start.sh，
+# 所以「设置页里填的代理」在 systemd 下不生效，必须在这里设置下面三行。
+# 服务器在中国大陆：填你在这台服务器上真实可用的代理地址（不要照抄 127.0.0.1:7890，
+# 那是开发机上的；除非这台服务器上也跑着同一个代理）。
+# 服务器在境外：不需要代理，这三行保持注释即可直连。
+# Environment=NODE_USE_ENV_PROXY=1
+# Environment=HTTPS_PROXY=http://127.0.0.1:7890
+# Environment=HTTP_PROXY=http://127.0.0.1:7890
+# Environment=NO_PROXY=localhost,127.0.0.1,::1,douban.com,doubanio.com,qq.com,wechat.com,weread.qq.com
 
 # —— 数据目录可自定义（默认 <项目>/data）——
 # Environment=BOOKNEST_DATA=/var/lib/booknest

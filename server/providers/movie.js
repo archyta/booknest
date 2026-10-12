@@ -46,9 +46,32 @@ function splitCardSubtitle(text) {
   };
 }
 
+/* 豆瓣电影搜索接口会因"异常请求"对 IP 软封禁：返回 HTTP 200 但内容恒为 []。
+ * 这里做熔断：连续空结果就暂停一段时间，避免越打越封。 */
+const DOUBAN_BLOCK = { until: 0, emptyStreak: 0, reason: '' };
+
+function doubanBlocked() {
+  return Date.now() < DOUBAN_BLOCK.until;
+}
+
+function noteDoubanEmpty() {
+  DOUBAN_BLOCK.emptyStreak += 1;
+  if (DOUBAN_BLOCK.emptyStreak >= 2) {
+    DOUBAN_BLOCK.until = Date.now() + 10 * 60 * 1000; // 退避 10 分钟
+    DOUBAN_BLOCK.reason = '豆瓣电影搜索接口返回空（IP 被限流，稍后自动重试）';
+  }
+}
+
+function noteDoubanOk() {
+  DOUBAN_BLOCK.emptyStreak = 0;
+  DOUBAN_BLOCK.until = 0;
+  DOUBAN_BLOCK.reason = '';
+}
+
 async function searchDouban(keyword) {
   const q = String(keyword || '').trim();
   if (!q) return [];
+  if (doubanBlocked()) return [];
   const url = `${BASE}/j/subject_suggest?q=${encodeURIComponent(q)}`;
   let list;
   try {
@@ -57,6 +80,11 @@ async function searchDouban(keyword) {
     return [];
   }
   if (!Array.isArray(list)) return [];
+  if (!list.length) {
+    noteDoubanEmpty();
+    return [];
+  }
+  noteDoubanOk();
   return list
     .filter((it) => it && it.title && it.id)
     .map((it) => ({
@@ -569,14 +597,54 @@ async function related(record, { tmdbKey } = {}) {
 /** 多源搜索：豆瓣 + IMDb（+ TMDb 若配置了 key） */
 async function search(keyword, opts = {}) {
   const q = String(keyword || '').trim();
-  if (!q) return { results: [], sources: [] };
-  const tasks = [searchDouban(q), searchImdb(q)];
-  if (opts.tmdbKey) tasks.push(searchTmdb(q, opts.tmdbKey).catch(() => []));
+  if (!q) return { results: [], sources: [], sourceStatus: [] };
+  const errors = { douban: '', imdb: '', tmdb: '' };
+  const tasks = [
+    searchDouban(q).catch((e) => {
+      errors.douban = e.message || '请求失败';
+      return [];
+    }),
+    searchImdb(q).catch((e) => {
+      errors.imdb = e.message || '请求失败';
+      return [];
+    }),
+  ];
+  if (opts.tmdbKey) {
+    tasks.push(
+      searchTmdb(q, opts.tmdbKey).catch((e) => {
+        errors.tmdb = e.message || '请求失败';
+        return [];
+      })
+    );
+  }
   const [db, imdb, tmdb] = await Promise.all(tasks.map((p) => Promise.resolve(p).catch(() => [])));
   const sources = [];
   if (db.length) sources.push('豆瓣');
   if (imdb.length) sources.push('IMDb');
   if (tmdb && tmdb.length) sources.push('TMDb');
+
+  // 来源状态：让前端能说明"为什么少了某个来源"，而不是静默丢弃
+  const sourceStatus = [
+    {
+      key: 'douban',
+      label: '豆瓣电影',
+      ok: db.length > 0,
+      count: db.length,
+      error: db.length ? '' : errors.douban || DOUBAN_BLOCK.reason || '没有匹配结果',
+    },
+    { key: 'imdb', label: 'IMDb', ok: imdb.length > 0, count: imdb.length, error: imdb.length ? '' : errors.imdb || '没有匹配结果' },
+  ];
+  if (opts.tmdbKey) {
+    sourceStatus.push({
+      key: 'tmdb',
+      label: 'TMDb',
+      ok: !!(tmdb && tmdb.length),
+      count: (tmdb || []).length,
+      error: tmdb && tmdb.length ? '' : errors.tmdb || '没有匹配结果',
+    });
+  } else {
+    sourceStatus.push({ key: 'tmdb', label: 'TMDb', ok: false, count: 0, error: '未配置 TMDb API Key（设置页填写后可用）' });
+  }
 
   // 合并：优先豆瓣（中文），同名同年的 IMDb/TMDb 结果去重
   const seen = new Set();
@@ -588,7 +656,35 @@ async function search(keyword, opts = {}) {
     merged.push(item);
   }
   merged.sort((a, b) => similarity(b.title, q) - similarity(a.title, q));
-  return { results: merged.slice(0, 20), sources };
+  return { results: merged.slice(0, 20), sources, sourceStatus };
+}
+
+/** 供 /api/movie-providers/check 使用：探测影片数据源可用性 */
+async function checkSources({ tmdbKey } = {}) {
+  const probes = [
+    { key: 'douban', label: '豆瓣电影', run: () => searchDouban('盗梦空间') },
+    { key: 'imdb', label: 'IMDb', run: () => searchImdb('inception') },
+  ];
+  if (tmdbKey) probes.push({ key: 'tmdb', label: 'TMDb', run: () => searchTmdb('inception', tmdbKey) });
+  const out = [];
+  for (const p of probes) {
+    const t0 = Date.now();
+    try {
+      const list = await p.run();
+      out.push({
+        key: p.key,
+        label: p.label,
+        ok: !!(list && list.length),
+        count: (list || []).length,
+        ms: Date.now() - t0,
+        error: list && list.length ? '' : p.key === 'douban' ? DOUBAN_BLOCK.reason || '接口返回空（可能被限流）' : '没有返回结果',
+      });
+    } catch (err) {
+      out.push({ key: p.key, label: p.label, ok: false, count: 0, ms: Date.now() - t0, error: err.message || '请求失败' });
+    }
+  }
+  if (!tmdbKey) out.push({ key: 'tmdb', label: 'TMDb', ok: false, count: 0, ms: 0, error: '未配置 TMDb API Key' });
+  return out;
 }
 
 /**
@@ -725,6 +821,7 @@ async function lookup(query) {
 module.exports = {
   search,
   lookup,
+  checkSources,
   related,
   mergeRecords,
   mergeRecommendations,

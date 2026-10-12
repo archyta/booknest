@@ -602,3 +602,9 @@ a { color: var(--brand); }
   position: absolute; left: 3px; top: 3px; font-size: 9.5px; line-height: 1.5;
   background: rgba(37, 99, 235, 0.92); color: #fff; border-radius: 999px; padding: 0 5px;
 }
+
+/* 影片搜索：数据源状态小药丸 */
+.src-status { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.src-pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--bg-soft); color: var(--text-mute); }
+.src-pill.ok { color: #34d399; }
+.src-pill.bad { color: #f59e0b; }
