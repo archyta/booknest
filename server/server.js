@@ -925,6 +925,16 @@ async function handleApi(req, res, url) {
     const idMap = new Map();
     const movieIdMap = new Map();
     const pendingCovers = []; // 需要按远端地址重新下载的封面/海报
+    // 回执：这份备份文件里到底带了什么（便于判断"没导入"是文件里没有还是代码没处理）
+    const received = {
+      books: (body.books || []).length,
+      movies: (body.movies || []).length,
+      booklists: (body.booklists || []).length,
+      movieLists: (body.movieLists || []).length,
+      categories: (body.categories || []).length,
+      tags: (body.tags || []).length,
+      hasMoviesKey: Object.prototype.hasOwnProperty.call(body, 'movies'),
+    };
 
     // ---- 1) 分类 / 标签：先按名称对齐到本地（跨实例 id 不同也能对上），并建 旧id→本地id 映射 ----
     const catByName = new Map(store.listCategories().map((c) => [c.name, c]));
@@ -1099,6 +1109,7 @@ async function handleApi(req, res, url) {
       movieListsAdded,
       coversLocalized,
       coversFailed,
+      received,
       total: db.books.length,
       totalMovies: db.movies.length,
     });

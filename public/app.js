@@ -3422,7 +3422,16 @@
         if (res.movieListsAdded) parts.push(`片单 +${res.movieListsAdded}`);
         if (res.coversLocalized) parts.push(`补齐封面 ${res.coversLocalized} 张`);
         if (res.coversFailed) parts.push(`${res.coversFailed} 张封面下载失败`);
-        toast(`导入完成：${parts.join('，')}`, res.coversFailed ? 'err' : undefined);
+        const rec = res.received || {};
+        let warn = '';
+        if (rec.hasMoviesKey === false) {
+          warn = '　⚠️ 这份备份是旧版本导出的，文件里没有影片数据';
+        } else if (rec.movies && !res.moviesAdded && !res.moviesSkipped) {
+          warn = `　⚠️ 文件里有 ${rec.movies} 部影片但服务端没有处理（服务端代码可能还是旧的，请更新后重启）`;
+        } else if (rec.movies === 0) {
+          warn = '　（该备份文件里没有影片数据：0 部）';
+        }
+        toast(`导入完成：${parts.join('，')}${warn}`, warn.startsWith('　⚠️') || res.coversFailed ? 'err' : undefined);
         await refresh();
         renderSettings();
       } catch (err) {
