@@ -259,6 +259,7 @@ async function handleApi(req, res, url) {
       commit: APP_COMMIT,
       uptimeSec: Math.round(process.uptime()),
       movieSupport: true, // 有影片模块的新代码才有这个字段，旧进程不会有
+      authRequired: auth.enabled(), // true 时其它 /api 需要先登录，裸 curl 会拿到 401
     });
   }
 
