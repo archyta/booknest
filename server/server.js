@@ -18,6 +18,35 @@ const isbnUtil = require('./isbn');
 const { toCsv, nowIso } = require('./util');
 
 const ROOT = path.resolve(__dirname, '..');
+
+/** 当前运行的版本与提交号（用于确认"服务器上跑的到底是哪份代码"） */
+const APP_VERSION = (() => {
+  try {
+    return require(path.join(ROOT, 'package.json')).version || '0.0.0';
+  } catch (err) {
+    return '0.0.0';
+  }
+})();
+function gitCommit() {
+  try {
+    const head = fs.readFileSync(path.join(ROOT, '.git', 'HEAD'), 'utf8').trim();
+    if (head.startsWith('ref: ')) {
+      const ref = head.slice(5).trim();
+      const direct = path.join(ROOT, '.git', ref);
+      if (fs.existsSync(direct)) return fs.readFileSync(direct, 'utf8').trim().slice(0, 7);
+      const packed = path.join(ROOT, '.git', 'packed-refs');
+      if (fs.existsSync(packed)) {
+        const line = fs.readFileSync(packed, 'utf8').split('\n').find((l) => l.endsWith(' ' + ref));
+        if (line) return line.split(' ')[0].slice(0, 7);
+      }
+      return ref;
+    }
+    return head.slice(0, 7);
+  } catch (err) {
+    return '';
+  }
+}
+const APP_COMMIT = gitCommit();
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const CERT_DIR = path.join(ROOT, 'certs');
 const HTTPS_PORT = Number(process.env.PORT || 8787);
@@ -222,7 +251,15 @@ async function handleApi(req, res, url) {
   const q = url.searchParams;
 
   if (p === '/api/health') {
-    return sendJson(res, 200, { ok: true, time: nowIso(), pid: process.pid });
+    return sendJson(res, 200, {
+      ok: true,
+      time: nowIso(),
+      pid: process.pid,
+      version: APP_VERSION,
+      commit: APP_COMMIT,
+      uptimeSec: Math.round(process.uptime()),
+      movieSupport: true, // 有影片模块的新代码才有这个字段，旧进程不会有
+    });
   }
 
   if (p === '/api/bootstrap' && req.method === 'GET') {
@@ -1214,6 +1251,7 @@ function logStartup() {
   );
   if (auth.enabled()) lines.push('  🔒 访问密码: 已开启（BOOKNEST_PASSWORD）');
   lines.push(`  运行环境: ${process.platform}/${process.arch} · Node ${process.versions.node}`);
+  lines.push(`  代码版本: v${APP_VERSION}${APP_COMMIT ? ` (${APP_COMMIT})` : ''}`);
   lines.push(`  数据文件: ${store.DB_FILE}`);
   lines.push('  ─────────────────────────────────────────');
   lines.push('  手机首次打开 https 会提示"证书不受信任"，选择"继续访问"即可；');
