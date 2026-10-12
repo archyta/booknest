@@ -232,8 +232,19 @@ function omdbKey() {
   return fromSettings || String(process.env.BOOKNEST_OMDB_KEY || '').trim();
 }
 
-/* 对外返回的设置：把 API Key 换成"是否已配置"的布尔值，密钥本身不回传前端 */
-const SECRET_SETTING_KEYS = ['googleBooksApiKey', 'tmdbApiKey', 'omdbApiKey'];
+/* 豆瓣登录 Cookie（可选）：设置页填写，用于恢复被限流的电影搜索 */
+function doubanCookie() {
+  const fromSettings = String(((store.getDb().settings || {}).doubanCookie) || '').trim();
+  return fromSettings || String(process.env.BOOKNEST_DOUBAN_COOKIE || '').trim();
+}
+
+/** 每次处理影片请求前同步给 provider（带上登录态） */
+function applyDoubanCookie() {
+  movie.setDoubanCookie(doubanCookie());
+}
+
+/* 对外返回的设置：把 API Key / Cookie 换成"是否已配置"的布尔值，密钥本身不回传前端 */
+const SECRET_SETTING_KEYS = ['googleBooksApiKey', 'tmdbApiKey', 'omdbApiKey', 'doubanCookie'];
 function publicSettings() {
   const raw = { ...(store.getDb().settings || {}) };
   for (const k of SECRET_SETTING_KEYS) {
@@ -719,6 +730,7 @@ async function handleApi(req, res, url) {
   /* ---------------- 电影 ---------------- */
 
   if (p === '/api/movie-providers/check' && (req.method === 'POST' || req.method === 'GET')) {
+    applyDoubanCookie();
     try {
       return sendJson(res, 200, { sources: await movie.checkSources({ tmdbKey: tmdbKey() }) });
     } catch (err) {
@@ -727,6 +739,7 @@ async function handleApi(req, res, url) {
   }
 
   if (p === '/api/movie-search' && req.method === 'GET') {
+    applyDoubanCookie();
     const keyword = String(q.get('q') || '').trim();
     if (!keyword) return sendJson(res, 200, { results: [], sources: [] });
     const key = `msearch:v1:${keyword.toLowerCase()}`;
@@ -745,6 +758,7 @@ async function handleApi(req, res, url) {
   }
 
   if (p === '/api/movie-lookup' && (req.method === 'POST' || req.method === 'GET')) {
+    applyDoubanCookie();
     const body = req.method === 'POST' ? await readBody(req) : {};
     const source = String(body.source || q.get('source') || '').trim();
     const sourceId = String(body.sourceId || q.get('sourceId') || '').trim();
@@ -819,6 +833,7 @@ async function handleApi(req, res, url) {
 
   const movieRelatedMatch = p.match(/^\/api\/movies\/([^/]+)\/related$/);
   if (movieRelatedMatch && req.method === 'GET') {
+    applyDoubanCookie();
     const m = store.getMovie(decodeId(movieRelatedMatch[1]));
     if (!m) return sendJson(res, 404, { error: '影片不存在' });
     const force = q.get('force') === '1';

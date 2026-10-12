@@ -10,9 +10,23 @@
 
 const { fetchWithTimeout, fetchJson, clean, cleanMultiline, unique, similarity, sleep, DESKTOP_UA } = require('../util');
 
-const BASE = 'https://movie.douban.com';
+// BASE 可用环境变量覆盖，仅用于本地调试（把豆瓣请求指向一个回显服务来验证请求头）
+const BASE = process.env.BOOKNEST_DOUBAN_BASE || 'https://movie.douban.com';
 const HEADERS = { Referer: `${BASE}/`, 'User-Agent': DESKTOP_UA };
 const MIN_INTERVAL_MS = 1100;
+
+/* 豆瓣对机房/高频 IP 会软封禁电影搜索（返回空数组或 403 need_login），
+ * 报错原文就是"请登录再试"。所以在设置里支持填自己的豆瓣 Cookie，
+ * 带上登录态后 suggest / rexxar 搜索都能恢复。 */
+let doubanCookie = '';
+function setDoubanCookie(v) {
+  doubanCookie = String(v || '').trim();
+}
+function headersFor(extra = {}) {
+  const h = { ...HEADERS, ...extra };
+  if (doubanCookie) h.Cookie = doubanCookie;
+  return h;
+}
 
 let chain = Promise.resolve();
 let lastAt = 0;
@@ -72,10 +86,18 @@ async function searchDouban(keyword) {
   const q = String(keyword || '').trim();
   if (!q) return [];
   if (doubanBlocked()) return [];
+  // 有登录 Cookie 时，先走更可靠的 rexxar 搜索
+  if (doubanCookie) {
+    const viaRexxar = await searchDoubanRexxar(q).catch(() => []);
+    if (viaRexxar.length) {
+      noteDoubanOk();
+      return viaRexxar;
+    }
+  }
   const url = `${BASE}/j/subject_suggest?q=${encodeURIComponent(q)}`;
   let list;
   try {
-    list = await schedule(() => fetchJson(url, { headers: HEADERS }, 8000));
+    list = await schedule(() => fetchJson(url, { headers: headersFor() }, 8000));
   } catch (err) {
     return [];
   }
@@ -102,6 +124,57 @@ async function searchDouban(keyword) {
     }));
 }
 
+/** 从 rexxar 搜索响应里容错提取条目（结构随版本变化，按"有 title 且有 id"判断） */
+function extractSearchItems(data) {
+  const out = [];
+  const seen = new Set();
+  const walk = (node, depth) => {
+    if (!node || depth > 4 || out.length > 40) return;
+    if (Array.isArray(node)) {
+      for (const n of node) walk(n, depth + 1);
+      return;
+    }
+    if (typeof node !== 'object') return;
+    const id = node.id || node.target_id;
+    if (node.title && id && !seen.has(String(id))) {
+      seen.add(String(id));
+      out.push(node);
+    }
+    for (const v of Object.values(node)) if (v && typeof v === 'object') walk(v, depth + 1);
+  };
+  walk(data && (data.subjects || data.smart_box || data), 0);
+  return out;
+}
+
+/** 豆瓣电影搜索（rexxar，需要登录态时最稳） */
+async function searchDoubanRexxar(keyword) {
+  const q = String(keyword || '').trim();
+  if (!q) return [];
+  const url = `https://m.douban.com/rexxar/api/v2/search?q=${encodeURIComponent(q)}&type=movie&start=0&count=20`;
+  let data;
+  try {
+    data = await schedule(() => fetchJson(url, { headers: headersFor({ Referer: 'https://m.douban.com/search/' }) }, 9000));
+  } catch (err) {
+    return [];
+  }
+  return extractSearchItems(data)
+    .filter((it) => it.title && (it.id || it.target_id))
+    .slice(0, 12)
+    .map((it) => ({
+      source: 'douban',
+      sourceLabel: '豆瓣',
+      sourceId: String(it.id || it.target_id),
+      title: clean(it.title),
+      subtitle: clean(it.card_subtitle || ''),
+      year: clean(String(it.year || (String(it.card_subtitle || '').match(/(19|20)\d{2}/) || [''])[0] || '')),
+      poster: (it.pic && (it.pic.large || it.pic.normal)) || it.cover_url || '',
+      type: it.type === 'tv' ? 'tv' : 'movie',
+      url: `https://movie.douban.com/subject/${it.id || it.target_id}/`,
+      rating: Number((it.rating && it.rating.value) || 0) || 0,
+      ratingCount: Number((it.rating && it.rating.count) || 0) || 0,
+    }));
+}
+
 async function doubanDetail(subjectId) {
   const id = String(subjectId || '').trim();
   if (!/^\d+$/.test(id)) throw new Error('豆瓣条目 id 无效');
@@ -109,7 +182,7 @@ async function doubanDetail(subjectId) {
   const data = await schedule(() =>
     fetchJson(
       url,
-      { headers: { Referer: `https://m.douban.com/movie/subject/${id}/`, 'User-Agent': DESKTOP_UA, Accept: 'application/json' } },
+      { headers: headersFor({ Referer: `https://m.douban.com/movie/subject/${id}/`, Accept: 'application/json' }) },
       9000
     )
   );
@@ -156,7 +229,7 @@ async function doubanRecommendations(subjectId, { count = 12 } = {}) {
     list = await schedule(() =>
       fetchJson(
         url,
-        { headers: { Referer: `https://m.douban.com/movie/subject/${id}/`, 'User-Agent': DESKTOP_UA, Accept: 'application/json' } },
+        { headers: headersFor({ Referer: `https://m.douban.com/movie/subject/${id}/`, Accept: 'application/json' }) },
         9000
       )
     );
@@ -822,6 +895,8 @@ module.exports = {
   search,
   lookup,
   checkSources,
+  setDoubanCookie,
+  searchDoubanRexxar,
   related,
   mergeRecords,
   mergeRecommendations,

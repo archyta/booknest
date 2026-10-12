@@ -2121,6 +2121,22 @@
           <button class="btn sm" data-action="save-omdb">保存</button>
           ${state.settings.omdbApiKeySet ? '<button class="btn sm ghost" data-action="clear-omdb">清除</button>' : ''}
         </div>
+        <div class="inline-form" style="margin-top:8px">
+          <input type="text" id="doubanCookie" placeholder="${
+            state.settings.doubanCookieSet ? '已配置（留空则不修改）' : '豆瓣 Cookie（可选）'
+          }" value="">
+          <button class="btn sm" data-action="save-douban-cookie">保存</button>
+          ${
+            state.settings.doubanCookieSet
+              ? '<button class="btn sm ghost" data-action="clear-douban-cookie">清除</button>'
+              : ''
+          }
+        </div>
+        <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-top:6px">
+          <b>豆瓣 Cookie（可选）</b>：豆瓣对机房/高频 IP 会软封禁电影搜索，报错原文就是"请登录再试"。
+          浏览器登录豆瓣后按 F12 → Network → 点任意一个 douban.com 请求 → 复制 Request Headers 里整条
+          <code>Cookie:</code> 的值粘到这里即可恢复。只在本地保存、不会回传页面。
+        </div>
         <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-top:6px">
           为安全起见，已保存的 Key <b>不会回传到页面</b>（只显示"已配置"）；重新填写即覆盖，点「清除」删除。<br>
           影片默认用豆瓣（中文片最全，无需 Key）+ IMDb 联想接口；填 TMDb Key 可补全海外片详情与推荐，
@@ -3431,6 +3447,22 @@
           state.settings.omdbApiKeySet = res.settings.omdbApiKeySet;
           renderSettings();
           toast('已清除 OMDb Key');
+        } else if (action === 'save-douban-cookie') {
+          const v = $('#doubanCookie').value.trim();
+          if (!v && state.settings.doubanCookieSet) {
+            toast('留空表示不修改；要删除请点「清除」');
+            return;
+          }
+          const res = await api('/api/settings', { method: 'PATCH', body: { doubanCookie: v } });
+          state.settings.doubanCookieSet = res.settings.doubanCookieSet;
+          toast(v ? '豆瓣 Cookie 已保存，影片搜索会带上登录态' : '已清除豆瓣 Cookie');
+          renderSettings();
+        } else if (action === 'clear-douban-cookie') {
+          if (!window.confirm('删除已保存的豆瓣 Cookie？')) return;
+          const res = await api('/api/settings', { method: 'PATCH', body: { doubanCookie: '' } });
+          state.settings.doubanCookieSet = res.settings.doubanCookieSet;
+          renderSettings();
+          toast('已清除豆瓣 Cookie');
         } else if (action === 'wipe') {
           if (!window.confirm('⚠️ 将删除全部书籍、分类、标签，且不可恢复。确定继续？')) return;
           if (!window.confirm('再确认一次：真的要清空所有数据吗？')) return;
