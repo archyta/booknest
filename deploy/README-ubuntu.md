@@ -63,7 +63,8 @@ sudo -u booknest BOOKNEST_PASSWORD='你的密码' node server/server.js
 - 如果显示 **`封面上识别: 不可用`** → 检查 `tesseract --list-langs`；也可手动指定：
   `BOOKNEST_OCR=tesseract BOOKNEST_TESSERACT_BIN=/usr/bin/tesseract`
 - 如果显示 **缺少中文语言包** → `sudo apt install tesseract-ocr-chi-sim`
-- 确认无误后 `Ctrl+C` 停掉，改用 systemd 托管。
+- 确认无误后 **一定要 `Ctrl+C` 停掉**这个手动进程，再进下一步交给 systemd。
+  留着它会导致后面 `systemctl restart` 看似成功、实际对外服务的还是这个旧进程（详见 §10 排错）。
 
 ## 4. 交给 systemd
 
@@ -163,7 +164,46 @@ sudo tar czf booknest-backup-$(date +%F).tar.gz -C /opt/booknest data
 
 ```bash
 systemctl is-active booknest                 # active
-curl -s localhost:8788/api/health            # {"ok":true,...}
+curl -s localhost:8788/api/health            # {"ok":true,...,"commit":"xxxxxxx","movieSupport":true}
 tesseract --list-langs | grep chi_sim        # 有输出
-journalctl -u booknest -n 30 --no-pager      # 横幅里有 🔍 与 🔒
+journalctl -u booknest -n 30 --no-pager      # 横幅里有 🔍 / 🔒 / 代码版本
 ```
+
+## 10. 排错：更新代码后没生效（最常见）
+
+现象：`git pull` 了、`systemctl restart` 也返回成功，但功能/数据还是旧的
+（例如导入备份后影片没进去）。
+
+**原因是端口被一个早先手动启动的进程占着**，systemd 的新进程起不来就退了，
+对外服务的还是旧进程。
+
+```bash
+# ① 看谁在监听，以及有几个进程
+sudo ss -lptn 'sport = :8788'
+pgrep -af "server/server.js"
+
+# ② 看 systemd 日志里有没有端口占用
+journalctl -u booknest -n 40 --no-pager | grep -iE "EADDRINUSE|already in use|Error"
+
+# ③ 杀掉非 systemd 托管的手动进程（就是上面那个跑 ./start.sh 或 node server/server.js 的）
+sudo kill <那个 pid>
+sudo systemctl restart booknest
+```
+
+**一行确认现在跑的到底是哪份代码**（v1.0.0 之后才有这些字段）：
+
+```bash
+curl -s localhost:8788/api/health
+# 新代码： {"ok":true,...,"version":"1.0.0","commit":"08cae0c","movieSupport":true}
+# 若没有 commit / movieSupport 字段 → 还是旧进程，回到上面 ①②③
+```
+
+启动横幅同样会打印，可直接看日志：
+
+```
+代码版本: v1.0.0 (08cae0c)
+```
+
+> 另一种情况：`WorkingDirectory` / `ExecStart` 指向的目录和你 `git pull` 的目录不是同一个
+> （例如更新了 `/opt/booknest`，服务却跑在 `/root/booknest`）。用
+> `systemctl cat booknest | grep -E "ExecStart|WorkingDirectory"` 核对。
