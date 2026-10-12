@@ -919,9 +919,53 @@ async function handleApi(req, res, url) {
     let added = 0;
     let skipped = 0;
     let listsAdded = 0;
+    let moviesAdded = 0;
+    let moviesSkipped = 0;
+    let movieListsAdded = 0;
     const idMap = new Map();
+    const movieIdMap = new Map();
+    const pendingCovers = []; // 需要按远端地址重新下载的封面/海报
+
+    // ---- 1) 分类 / 标签：先按名称对齐到本地（跨实例 id 不同也能对上），并建 旧id→本地id 映射 ----
     const catByName = new Map(store.listCategories().map((c) => [c.name, c]));
     const tagByName = new Map(store.listTags().map((t) => [t.name, t]));
+    const catIdMap = new Map();
+    const tagIdMap = new Map();
+    for (const c of body.categories || []) {
+      if (!c || !c.name) continue;
+      let local = catByName.get(c.name);
+      if (!local) {
+        try {
+          local = store.addCategory({ name: c.name, color: c.color || '#64748b' });
+        } catch (err) {
+          local = store.findCategoryByName(c.name);
+        }
+        if (local) catByName.set(local.name, local);
+      }
+      if (local) {
+        if (c.id) catIdMap.set(String(c.id), local.id);
+        catIdMap.set(local.name, local.id);
+      }
+    }
+    for (const t of body.tags || []) {
+      if (!t || !t.name) continue;
+      let local = tagByName.get(t.name);
+      if (!local) {
+        try {
+          local = store.addTag({ name: t.name, color: t.color });
+        } catch (err) {
+          local = store.findTagByName(t.name);
+        }
+        if (local) tagByName.set(local.name, local);
+      }
+      if (local) {
+        if (t.id) tagIdMap.set(String(t.id), local.id);
+        tagIdMap.set(local.name, local.id);
+      }
+    }
+    const mapTags = (ids) => (ids || []).map((id) => tagIdMap.get(String(id)) || (store.listTags().some((t) => t.id === id) ? id : '')).filter(Boolean);
+
+    // ---- 2) 书籍：ISBN 已存在则跳过，否则新增并本地化封面 ----
     for (const raw of body.books || []) {
       const norm = isbnUtil.normalize(raw.isbn13 || raw.isbn10 || '');
       if (norm.ok && store.findBookByIsbn(norm.isbn13)) {
@@ -934,30 +978,21 @@ async function handleApi(req, res, url) {
         input.isbn13 = norm.isbn13;
         input.isbn10 = norm.isbn10;
       }
-      if (raw.categoryName && !input.categoryId) {
-        let cat = catByName.get(raw.categoryName);
-        if (!cat) {
-          try {
-            cat = store.addCategory({ name: raw.categoryName, color: raw.categoryColor || '#64748b' });
-          } catch {
-            cat = store.findCategoryByName(raw.categoryName);
-          }
-          if (cat) catByName.set(cat.name, cat);
-        }
-        if (cat) input.categoryId = cat.id;
-      }
-      input.tagIds = (raw.tagIds || [])
-        .map((id) => (tagByName.get(id) || {}).id || id)
-        .filter((id) => store.listTags().some((t) => t.id === id));
+      input.categoryId =
+        catIdMap.get(String(raw.categoryId || '')) ||
+        (catByName.get(raw.categoryName) || {}).id ||
+        (store.listCategories().some((c) => c.id === raw.categoryId) ? raw.categoryId : '');
+      input.tagIds = mapTags(raw.tagIds);
       const book = store.addBook(input);
       if (raw.id) idMap.set(String(raw.id), book.id);
-      if (book.coverRemote && !book.cover) {
-        const local = await store.localizeCover(book.coverRemote, book.id);
-        if (local) store.updateBook(book.id, { cover: local });
+      // 导出只带封面路径不带图片：本机没有这个文件时按 coverRemote 重新下载
+      if (book.coverRemote && !store.coverFileExists(book.cover)) {
+        pendingCovers.push({ kind: 'book', id: book.id, remote: book.coverRemote });
       }
       added += 1;
     }
-    // 书单：同名合并，成员按导入时的 id 映射到新 id
+
+    // ---- 3) 书单：同名合并，成员 id 映射 ----
     for (const raw of body.booklists || []) {
       if (!raw || !raw.name) continue;
       let list = store.findBooklistByName(raw.name);
@@ -965,7 +1000,7 @@ async function handleApi(req, res, url) {
         try {
           list = store.addBooklist({ name: raw.name, description: raw.description, color: raw.color, sort: raw.sort });
           listsAdded += 1;
-        } catch {
+        } catch (err) {
           list = store.findBooklistByName(raw.name);
         }
       }
@@ -978,27 +1013,95 @@ async function handleApi(req, res, url) {
         .filter(Boolean);
       if (members.length) store.addBooksToBooklist(list.id, members);
     }
-    for (const t of body.tags || []) {
-      if (!t || !t.name) continue;
-      if (tagByName.has(t.name)) continue;
-      try {
-        const tag = store.addTag({ name: t.name, color: t.color });
-        tagByName.set(tag.name, tag);
-      } catch {
-        /* ignore */
+
+    // ---- 4) 影片：同一条目（同源 id，或同名同年）已存在则跳过 ----
+    const normTitle = (s) => String(s || '').toLowerCase().replace(/[\s\-_:：·,，.。()（）\[\]【】《》]/g, '');
+    for (const raw of body.movies || []) {
+      if (!raw || !raw.title) continue;
+      const srcId = String(raw.sourceId || '');
+      const dup =
+        (raw.source && srcId && store.findMovieBySource(raw.source, srcId)) ||
+        store.listMovies().find(
+          (m) =>
+            normTitle(m.title) === normTitle(raw.title) &&
+            String(m.year || '') === String(raw.year || '') &&
+            (m.imdbId || '') === (raw.imdbId || '')
+        );
+      if (dup) {
+        moviesSkipped += 1;
+        if (raw.id) movieIdMap.set(String(raw.id), dup.id);
+        continue;
       }
-    }
-    for (const c of body.categories || []) {
-      if (!c || !c.name) continue;
-      if (catByName.has(c.name)) continue;
-      try {
-        const cat = store.addCategory({ name: c.name, color: c.color });
-        catByName.set(cat.name, cat);
-      } catch {
-        /* ignore */
+      const input = { ...raw };
+      delete input.id;
+      input.tags = mapTags(raw.tags);
+      const movie = store.addMovie(input);
+      if (raw.id) movieIdMap.set(String(raw.id), movie.id);
+      if (movie.posterRemote && !store.coverFileExists(movie.poster)) {
+        pendingCovers.push({ kind: 'movie', id: movie.id, remote: movie.posterRemote });
       }
+      moviesAdded += 1;
     }
-    return sendJson(res, 200, { ok: true, added, skipped, listsAdded, total: db.books.length });
+
+    // ---- 5) 片单：同名合并，成员 id 映射 ----
+    for (const raw of body.movieLists || []) {
+      if (!raw || !raw.name) continue;
+      let list = store.findMovieListByName(raw.name);
+      if (!list) {
+        try {
+          list = store.addMovieList({ name: raw.name, description: raw.description, color: raw.color, sort: raw.sort });
+          movieListsAdded += 1;
+        } catch (err) {
+          list = store.findMovieListByName(raw.name);
+        }
+      }
+      if (!list) continue;
+      const members = (raw.items || raw.movieIds || [])
+        .map((it) => {
+          const oldId = typeof it === 'string' ? it : it && it.movieId;
+          return movieIdMap.get(String(oldId)) || '';
+        })
+        .filter(Boolean);
+      if (members.length) store.addMoviesToMovieList(list.id, members);
+    }
+
+    // ---- 6) 补齐封面/海报：并发 6，失败不影响导入结果 ----
+    let coversLocalized = 0;
+    let coversFailed = 0;
+    if (pendingCovers.length) {
+      const queue = pendingCovers.slice();
+      const worker = async () => {
+        while (queue.length) {
+          const item = queue.shift();
+          const local = await store.localizeCover(item.remote, item.id);
+          if (local) {
+            if (item.kind === 'book') store.updateBook(item.id, { cover: local });
+            else store.updateMovie(item.id, { poster: local });
+            coversLocalized += 1;
+          } else {
+            // 下载失败：清掉无效的本地路径，前端会退回用 coverRemote 经 /api/cover 代理显示
+            if (item.kind === 'book') store.updateBook(item.id, { cover: '' });
+            else store.updateMovie(item.id, { poster: '' });
+            coversFailed += 1;
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(6, queue.length) }, worker));
+    }
+
+    return sendJson(res, 200, {
+      ok: true,
+      added,
+      skipped,
+      listsAdded,
+      moviesAdded,
+      moviesSkipped,
+      movieListsAdded,
+      coversLocalized,
+      coversFailed,
+      total: db.books.length,
+      totalMovies: db.movies.length,
+    });
   }
 
   if (p === '/api/settings' && req.method === 'PATCH') {

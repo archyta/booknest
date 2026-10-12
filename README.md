@@ -203,8 +203,13 @@ sudo systemctl enable --now booknest
 | `certs/` | https 自签证书（`start.sh` 自动生成，与当前局域网 IP 绑定） |
 
 - 换电脑 / 换 Wi-Fi 后 IP 变了：删掉 `certs/` 重新运行 `start.sh` 即可重新生成。
-- 备份：设置页「导出 JSON」，恢复用「导入 JSON 备份」（按 ISBN 去重）。
-- 表格分析：设置页「导出 CSV」（带 BOM，Excel/Numbers 直接打开不乱码）。
+- 备份：设置页「导出 JSON」，恢复用「导入 JSON 备份」。导入是**增量合并**，不会清空现有数据：
+  - **书籍**按 ISBN 去重（已存在的跳过，不覆盖你现在的状态/标签）；
+  - **影片**按「同源 id」或「同名+同年+同 IMDb id」去重；**片单**按名称合并、成员自动映射；
+  - **分类/标签**按**名称**对齐到本机（跨实例 id 不同也能对上）；
+  - **封面/海报**：JSON 里只有路径没有图片，所以导入时会按 `coverRemote`/`posterRemote` **重新下载**（并发 6，实测 114 张 / 3 秒），下载失败的会退回用 `/api/cover` 代理显示，不会留死链；
+  - 导入完成后会提示「新增 X 本，跳过 Y 本，影片 +N，补齐封面 M 张」。
+- 表格分析：设置页「导出 CSV」（带 BOM，Excel/Numbers 直接打开不乱码；CSV 只含书籍，影片请用 JSON）。
 
 ---
 
@@ -245,8 +250,8 @@ PATCH  /api/books/:id                 修改任意字段（改状态会自动记
 DELETE /api/books/:id                 删除
 POST   /api/books/:id/refetch          重新抓取并覆盖元数据字段
 GET    /api/books/:id/related          相关推荐（豆瓣读者也喜欢 + 同系列/同作者 + 微信读书 + Open Library，缓存 3 天，?force=1 强制刷新）
-GET    /api/export?format=json|csv     导出
-POST   /api/import                    导入备份
+GET    /api/export?format=json|csv     导出（JSON 含书籍+影片+书单+片单；CSV 仅书籍）
+POST   /api/import                    增量导入备份（书籍/影片/书单/片单/分类/标签，封面按远端地址重新下载）
 GET/POST/PATCH/DELETE /api/categories  /api/tags   分类与标签管理
 GET    /api/booklists                 书单列表（含 已读/共 进度统计与排序方式）
 POST   /api/booklists                 新建书单 {name,description,color}

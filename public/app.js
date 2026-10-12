@@ -3415,7 +3415,14 @@
         const text = await file.text();
         const data = JSON.parse(text);
         const res = await api('/api/import', { method: 'POST', body: data });
-        toast(`导入完成：新增 ${res.added} 本，跳过 ${res.skipped} 本`);
+        const parts = [`新增 ${res.added} 本`, `跳过 ${res.skipped} 本`];
+        if (res.moviesAdded || res.moviesSkipped) {
+          parts.push(`影片 +${res.moviesAdded || 0}${res.moviesSkipped ? ` / 跳过 ${res.moviesSkipped}` : ''}`);
+        }
+        if (res.movieListsAdded) parts.push(`片单 +${res.movieListsAdded}`);
+        if (res.coversLocalized) parts.push(`补齐封面 ${res.coversLocalized} 张`);
+        if (res.coversFailed) parts.push(`${res.coversFailed} 张封面下载失败`);
+        toast(`导入完成：${parts.join('，')}`, res.coversFailed ? 'err' : undefined);
         await refresh();
         renderSettings();
       } catch (err) {

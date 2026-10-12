@@ -202,6 +202,12 @@ function findCategoryByName(name) {
   return getDb().categories.find((c) => c.name === target) || null;
 }
 
+function findTagByName(name) {
+  const target = String(name || '').trim();
+  if (!target) return null;
+  return getDb().tags.find((t) => t.name === target) || null;
+}
+
 function addCategory({ name, color }) {
   const clean = String(name || '').trim();
   if (!clean) throw new Error('分类名不能为空');
@@ -1036,6 +1042,16 @@ async function localizeCover(url, baseName) {
   }
 }
 
+/** 导入备份时用：判断 /covers/xxx.jpg 这种本地路径在本机是否真的存在。
+ *  JSON 导出只带路径不带图片，换一台机器导入时文件是缺的，需要按 coverRemote 重新下载。 */
+function coverFileExists(relPath) {
+  const rel = String(relPath || '');
+  if (!rel.startsWith('/covers/')) return false;
+  const name = path.basename(rel);
+  if (!name || name.includes('..')) return false;
+  return fs.existsSync(path.join(COVER_DIR, name));
+}
+
 /* ---------------- 封面照片上传（无条码的书用拍照识别） ---------------- */
 
 const EXT_BY_UPLOAD_TYPE = { 'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'image/heic': '.heic', 'image/heif': '.heic' };
@@ -1207,6 +1223,7 @@ module.exports = {
   updateCategory,
   deleteCategory,
   findCategoryByName,
+  findTagByName,
   listTags,
   addTag,
   updateTag,
@@ -1263,5 +1280,6 @@ module.exports = {
   DB_FILE,
   DATA_DIR,
   COVER_DIR,
+  coverFileExists,
   UPLOAD_DIR,
 };
