@@ -698,3 +698,12 @@ a { color: var(--brand); }
   position: absolute; right: 5px; top: 5px; width: 18px; height: 18px; border-radius: 50%;
   background: #16a34a; color: #fff; font-size: 11px; display: grid; place-items: center;
 }
+
+/* 系列区块里的「＋ 添加影片」卡片 */
+.sim-card.add-tile {
+  display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 4px;
+  border: 1px dashed color-mix(in srgb, var(--brand) 55%, transparent); border-radius: 10px;
+  color: var(--brand); background: color-mix(in srgb, var(--brand) 6%, transparent);
+}
+.sim-card.add-tile .plus { font-size: 22px; line-height: 1; }
+.sim-card.add-tile .lbl { font-size: 10.5px; }

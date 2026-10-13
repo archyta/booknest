@@ -48,6 +48,7 @@
     movieSources: [],
     movieCollection: null,
     person: null,
+    seriesPick: null,
     movieListPick: null,
     movieCurrentListId: '',
     creatingMovieList: false,
@@ -2293,6 +2294,7 @@
           state.movieSearch = { q: '', results: [], sources: [], sourceStatus: [], busy: false, error: '' };
         else if (sheetId === 'sheetMovieListPick') state.movieListPick = null;
         else if (sheetId === 'sheetPerson') state.person = null;
+        else if (sheetId === 'sheetSeries') state.seriesPick = null;
       })
     );
 
@@ -2699,19 +2701,33 @@
         else if (all) patch.status = 'watching';
         await autoSaveMovie(patch);
         renderMovieSheet();
-      } else if (act === 'manual-collection-set' || act === 'manual-collection-rename') {
-        const cur = (d.movie.collection && !d.movie.collection.id && d.movie.collection.name) || '';
-        const name = window.prompt('系列名称（同系列的影片填同一个名字，例如：冰与火之歌）', cur);
-        if (name == null) return;
-        const clean = name.trim();
-        if (!clean) {
-          toast('系列名不能为空', 'err');
+      } else if (act === 'manual-collection-set') {
+        // 已有系列先让选，没有再新建
+        const names = [...new Set(state.movies.map((x) => ((x.collection || {}).manual ? (x.collection || {}).name : '')).filter(Boolean))];
+        if (!names.length) {
+          await assignManualSeries(d.movie);
           return;
         }
-        await autoSaveMovie({ collection: { id: '', name: clean, manual: true } });
-        await refresh();
-        renderMovieSheet();
-        toast(`已归入系列「${clean}」`);
+        e.stopPropagation();
+        openMiniMenu(
+          action,
+          [
+            ...names.map((n) => ({
+              key: n,
+              label: n,
+              icon: '🎞',
+              note: `${state.movies.filter((x) => (x.collection || {}).name === n).length} 部`,
+            })),
+            { key: '__new__', label: '＋ 新建系列…', icon: '' },
+          ],
+          async (key) => {
+            if (key === '__new__') await assignManualSeries(d.movie, '');
+            else await assignManualSeries(d.movie, key);
+          },
+          '归入哪个系列'
+        );
+      } else if (act === 'series-add') {
+        openSeriesPicker(action.dataset.series || '');
       } else if (act === 'manual-collection-clear') {
         if (!window.confirm('把这个影片移出该系列？（不会删除影片本身）')) return;
         await autoSaveMovie({ collection: null });
@@ -2764,6 +2780,44 @@
 
     // eslint-disable-next-line no-unreachable
 
+
+    $('#seriesBody').addEventListener('change', (e) => {
+      const sp = state.seriesPick;
+      if (!sp) return;
+      if (e.target.id === 'seriesSearch') return;
+      if (!e.target.dataset || !e.target.dataset.spickId) return;
+      const id = e.target.dataset.spickId;
+      if (e.target.checked) sp.selected.add(id);
+      else sp.selected.delete(id);
+      const c = $('#seriesCount');
+      if (c) c.textContent = sp.selected.size;
+    });
+    $('#seriesBody').addEventListener('input', (e) => {
+      const sp = state.seriesPick;
+      if (!sp || e.target.id !== 'seriesSearch') return;
+      sp.query = e.target.value;
+      clearTimeout(sp.timer);
+      sp.timer = setTimeout(() => {
+        drawSeriesPicker();
+        const i = $('#seriesSearch');
+        if (i) {
+          i.focus();
+          i.setSelectionRange(i.value.length, i.value.length);
+        }
+      }, 180);
+    });
+    $('#seriesBody').addEventListener('click', async (e) => {
+      const sp = state.seriesPick;
+      if (!sp) return;
+      const act = e.target.closest('[data-act]');
+      if (!act) return;
+      if (act.dataset.act === 'spick-none') {
+        sp.selected.clear();
+        drawSeriesPicker();
+      } else if (act.dataset.act === 'spick-save') {
+        await applySeriesPick();
+      }
+    });
 
     $('#personBody').addEventListener('change', (e) => {
       const p = state.person;
@@ -4375,18 +4429,23 @@
                   const sib = state.movies.filter(
                     (x) => x.id !== m.id && (x.collection || {}).name === m.collection.name && !(x.collection || {}).id
                   );
-                  return sib.length
-                    ? `<div class="sim-row">${sib
-                        .map(
-                          (x) => `<button class="sim-card" data-movie="${esc(x.id)}">
-                            <div class="cover">${posterSrc(x) ? `<img loading="lazy" src="${esc(posterSrc(x))}" alt="">` : '🎬'}${
-                            x.type === 'tv' ? '<span class="agree">剧集</span>' : ''
-                          }</div>
-                            <div class="t">${esc(x.title)}</div>
-                            <div class="s">${esc(x.year || '')}</div></button>`
-                        )
-                        .join('')}</div>`
-                    : '<div class="hint">片库里还没有同系列的其它影片</div>';
+                  const tile = `<button class="sim-card add-tile" data-action="series-add" data-series="${esc(
+                    m.collection.name
+                  )}"><span class="plus">＋</span><span class="lbl">添加影片</span></button>`;
+                  return (
+                    (sib.length
+                      ? `<div class="sim-row">${sib
+                          .map(
+                            (x) => `<button class="sim-card" data-movie="${esc(x.id)}">
+                              <div class="cover">${posterSrc(x) ? `<img loading="lazy" src="${esc(posterSrc(x))}" alt="">` : '🎬'}${
+                              x.type === 'tv' ? '<span class="agree">剧集</span>' : ''
+                            }</div>
+                              <div class="t">${esc(x.title)}</div>
+                              <div class="s">${esc(x.year || '')}</div></button>`
+                          )
+                          .join('')}${tile}</div>`
+                      : `<div class="sim-row">${tile}</div>`)
+                  );
                 })()
               }
               <div class="btn-row" style="margin-top:8px">
@@ -4542,6 +4601,119 @@
       .filter((x) => x.score >= 2)
       .sort((a, b) => b.score - a.score)
       .slice(0, 10);
+  }
+
+  /** 把某个影片归入手动系列（name 为空则先问名字） */
+  async function assignManualSeries(movie, presetName) {
+    const cur = (movie.collection && !movie.collection.id && movie.collection.name) || '';
+    let name = presetName != null ? presetName : cur;
+    if (!name) {
+      name = window.prompt('系列名称（同系列的影片填同一个名字，例如：冰与火之歌）', cur);
+      if (name == null) return;
+    }
+    const clean = String(name).trim();
+    if (!clean) {
+      toast('系列名不能为空', 'err');
+      return;
+    }
+    const d = state.movieDraft;
+    if (d && d.movie.id === movie.id) {
+      await autoSaveMovie({ collection: { id: '', name: clean, manual: true } });
+      await refresh();
+      renderMovieSheet();
+    } else {
+      try {
+        await api(`/api/movies/${encodeURIComponent(movie.id)}`, {
+          method: 'PATCH',
+          body: { collection: { id: '', name: clean, manual: true } },
+        });
+        await refresh();
+      } catch (err) {
+        toast(`保存失败：${err.message}`, 'err');
+        return;
+      }
+    }
+    toast(`已归入系列「${clean}」`);
+  }
+
+  /** 「＋ 添加影片」：勾选片库里的影片加入这个系列（也能取消勾选移出） */
+  function openSeriesPicker(name) {
+    const members = new Set(
+      state.movies.filter((x) => (x.collection || {}).name === name && !(x.collection || {}).id).map((x) => x.id)
+    );
+    state.seriesPick = { name, selected: members, query: '' };
+    drawSeriesPicker();
+    openSheet('#sheetSeries');
+  }
+
+  function drawSeriesPicker() {
+    const sp = state.seriesPick;
+    if (!sp) return;
+    const q = sp.query.trim().toLowerCase();
+    const list = state.movies
+      .filter((m) => !q || [m.title, (m.directors || []).join(' '), m.year].join(' ').toLowerCase().includes(q))
+      .sort((a, b) => String(b.year || '').localeCompare(String(a.year || '')));
+    $('#seriesTitle').textContent = `加入系列：${sp.name}`;
+    $('#seriesBody').innerHTML = `
+      <div class="searchbox" style="margin-bottom:10px">
+        <input id="seriesSearch" type="search" placeholder="搜索片名 / 导演 / 年份" value="${esc(sp.query)}">
+      </div>
+      <div class="hint" style="font-size:12px;color:var(--text-mute);margin-bottom:8px">
+        勾选＝加入「${esc(sp.name)}」，取消勾选＝移出；已选 <b id="seriesCount">${sp.selected.size}</b> 部
+      </div>
+      <div style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:12px">
+        ${
+          list.length
+            ? list
+                .map((m) => {
+                  const other = (m.collection || {}).name && (m.collection || {}).name !== sp.name ? (m.collection || {}).name : '';
+                  return `<label class="movie-pick-item">
+                    <input type="checkbox" data-spick-id="${esc(m.id)}" ${sp.selected.has(m.id) ? 'checked' : ''}>
+                    <div class="poster">${posterSrc(m) ? `<img loading="lazy" src="${esc(posterSrc(m))}" alt="">` : '🎬'}</div>
+                    <div class="info"><div class="t">${esc(m.title)}</div><div class="s">${esc(
+                    [m.year || '', m.type === 'tv' ? '剧集' : '电影', other ? `现属：${other}` : ''].filter(Boolean).join(' · ')
+                  )}</div></div>
+                  </label>`;
+                })
+                .join('')
+            : '<div class="center">没有匹配的影片</div>'
+        }
+      </div>
+      <div class="sticky-bar">
+        <button class="btn ghost" data-act="spick-none">清空</button>
+        <button class="btn" data-act="spick-save">完成</button>
+      </div>`;
+  }
+
+  async function applySeriesPick() {
+    const sp = state.seriesPick;
+    if (!sp) return;
+    const target = sp.selected;
+    const changed = [];
+    for (const m of state.movies) {
+      const isMember = (m.collection || {}).name === sp.name && !(m.collection || {}).id;
+      const should = target.has(m.id);
+      if (should && !isMember) changed.push([m, { id: '', name: sp.name, manual: true }]);
+      else if (!should && isMember) changed.push([m, null]);
+    }
+    if (!changed.length) {
+      toast('没有变化');
+      return;
+    }
+    let ok = 0;
+    for (const [m, collection] of changed) {
+      try {
+        await api(`/api/movies/${encodeURIComponent(m.id)}`, { method: 'PATCH', body: { collection } });
+        ok += 1;
+      } catch (err) {
+        /* 跳过失败的 */
+      }
+    }
+    await refresh();
+    closeSheet('#sheetSeries');
+    state.seriesPick = null;
+    renderMovieSheet();
+    toast(`系列「${sp.name}」已更新：${ok} 部`);
   }
 
   /** 点导演 / 编剧 / 主演 → 列出这个人的全部作品 */
