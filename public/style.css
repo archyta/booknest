@@ -608,3 +608,17 @@ a { color: var(--brand); }
 .src-pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--bg-soft); color: var(--text-mute); }
 .src-pill.ok { color: #34d399; }
 .src-pill.bad { color: #f59e0b; }
+
+/* 片库：电影 / 剧集 分段筛选 */
+.kind-switch { display: flex; gap: 6px; margin: 0 0 8px; }
+.kind-switch button {
+  flex: 1; height: 32px; border-radius: 9px; background: var(--bg-soft); color: var(--text-dim);
+  font-size: 12.5px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 4px;
+  border: 1px solid transparent;
+}
+.kind-switch button.on { background: color-mix(in srgb, var(--brand) 18%, transparent); color: var(--brand); border-color: color-mix(in srgb, var(--brand) 45%, transparent); }
+.kind-switch button .n { font-size: 11px; opacity: 0.75; font-weight: 400; }
+.movie-card .poster .kind {
+  position: absolute; right: 6px; top: 6px; font-size: 10px; padding: 1px 6px; border-radius: 999px;
+  background: rgba(14, 165, 233, 0.92); color: #fff; font-weight: 600;
+}

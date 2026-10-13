@@ -41,7 +41,7 @@
     movieListSorts: {},
     movieStatuses: {},
     movieStats: {},
-    movieFilters: { status: '', genre: '', tag: '', q: '', sort: 'added-desc' },
+    movieFilters: { status: '', genre: '', tag: '', q: '', sort: 'added-desc', kind: '' },
     movieDraft: null,
     movieRelated: null,
     movieSearch: { q: '', results: [], sources: [], sourceStatus: [], busy: false, error: '' },
@@ -625,6 +625,7 @@
   }
 
   function renderAll() {
+    renderKindSwitch();
     renderStatusChips();
     renderFilterOptions();
     renderShelf();
@@ -2340,11 +2341,19 @@
         state.filters = { status: '', category: '', tag: '', q: '', sort: 'added-desc', tagIds: [] };
         renderAll();
       } else if (action.dataset.action === 'clear-movie-filters') {
-        state.movieFilters = { status: '', genre: '', tag: '', q: '', sort: 'added-desc' };
+        state.movieFilters = { status: '', genre: '', tag: '', q: '', sort: 'added-desc', kind: '' };
         renderAll();
       } else if (action.dataset.action === 'open-movie-search') {
         openMovieSearch();
       }
+    });
+
+    $('#kindSwitch').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-mkind]');
+      if (!btn) return;
+      state.movieFilters.kind = btn.dataset.mkind;
+      renderKindSwitch();
+      renderShelf();
     });
 
     $('#statusChips').addEventListener('click', (e) => {
@@ -3544,6 +3553,7 @@
     const f = state.movieFilters;
     const q = f.q.trim().toLowerCase();
     let list = state.movies.slice();
+    if (f.kind) list = list.filter((m) => (m.type === 'tv' ? 'tv' : 'movie') === f.kind);
     if (f.status) list = list.filter((m) => m.status === f.status);
     if (f.genre) list = list.filter((m) => (m.genres || []).includes(f.genre));
     if (f.tag) list = list.filter((m) => (m.tags || []).includes(f.tag));
@@ -3594,6 +3604,7 @@
       <div class="poster">
         ${p ? `<img loading="lazy" src="${esc(p)}" alt="">` : '🎬'}
         <span class="st" style="background:${esc(st.color)}">${esc(st.label)}</span>
+        ${m.type === 'tv' ? '<span class="kind">剧集</span>' : ''}
         ${m.rating ? `<span class="rt">★ ${m.rating}</span>` : ''}
       </div>
       <div class="t">${esc(m.title)}</div>
@@ -3622,14 +3633,43 @@
     </button>`;
   }
 
+  /** 片库：全部 / 电影 / 剧集 分段筛选（含数量） */
+  function renderKindSwitch() {
+    const box = $('#kindSwitch');
+    if (!box) return;
+    if (state.mode !== 'movie') {
+      box.classList.add('hidden');
+      box.innerHTML = '';
+      return;
+    }
+    box.classList.remove('hidden');
+    const movies = state.movies.filter((m) => m.type !== 'tv').length;
+    const tvs = state.movies.filter((m) => m.type === 'tv').length;
+    const cur = state.movieFilters.kind || '';
+    const opts = [
+      ['', '全部', state.movies.length],
+      ['movie', '电影', movies],
+      ['tv', '剧集', tvs],
+    ];
+    box.innerHTML = opts
+      .map(
+        ([key, label, n]) =>
+          `<button class="${cur === key ? 'on' : ''}" data-mkind="${key}">${esc(label)}<span class="n">${n}</span></button>`
+      )
+      .join('');
+  }
+
   function renderMovieShelf() {
     const list = filteredMovies();
     const view = $('#view');
     const countEl = $('#shelfCount');
     if (countEl) countEl.textContent = state.movies.length ? `共 ${state.movies.length} 部` : '';
+    const kindLabel = state.movieFilters.kind === 'movie' ? '电影' : state.movieFilters.kind === 'tv' ? '剧集' : '';
+    const statusLabel = (state.movieStatuses[state.movieFilters.status] || {}).label || '';
+    const rightTags = [kindLabel, statusLabel].filter(Boolean).join(' · ') || '全部';
     const summary = `<div class="shelf-summary"><span>当前显示 ${list.length} 部${
-      state.movieFilters.q ? ` · 搜索「${esc(state.movieFilters.q)}」` : ''
-    }</span><span>${esc((state.movieStatuses[state.movieFilters.status] || {}).label || '全部')}</span></div>`;
+      kindLabel ? `（${esc(kindLabel)}）` : ''
+    }${state.movieFilters.q ? ` · 搜索「${esc(state.movieFilters.q)}」` : ''}</span><span>${esc(rightTags)}</span></div>`;
 
     if (!state.movies.length) {
       view.innerHTML = `<div class="empty"><div class="big">🎬</div><p><b>片库还是空的</b></p>
@@ -3649,14 +3689,14 @@
       return;
     }
     if (state.viewMode === 'group') {
-      const groups = new Map();
-      for (const m of list) {
-        const g = (m.genres || [])[0] || '未分类';
-        if (!groups.has(g)) groups.set(g, []);
-        groups.get(g).push(m);
-      }
+      // 片库的分组视图把「电影 / 剧集」分开显示（每组内再按当前排序）
+      const groups = new Map([
+        ['电影', []],
+        ['剧集', []],
+      ]);
+      for (const m of list) groups.get(m.type === 'tv' ? '剧集' : '电影').push(m);
       const html = Array.from(groups.entries())
-        .sort((a, b) => b[1].length - a[1].length)
+        .filter(([, items]) => items.length)
         .map(
           ([name, items]) =>
             `<div class="group-title"><span class="chip" style="font-weight:700">${esc(name)}</span>
