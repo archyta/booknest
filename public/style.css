@@ -639,3 +639,22 @@ a { color: var(--brand); }
   background: color-mix(in srgb, var(--brand) 16%, transparent); color: var(--brand);
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* 通用小菜单（卡片上改观看状态 / 批量导入选状态） */
+.mini-menu {
+  position: fixed; z-index: 150; min-width: 148px; padding: 5px;
+  background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+.mini-menu .mm-title { font-size: 11px; color: var(--text-mute); padding: 4px 10px 6px; }
+.mini-menu button {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px; border-radius: 8px;
+  font-size: 13px; color: var(--text-dim); text-align: left;
+}
+.mini-menu button .n { margin-left: auto; font-size: 11.5px; color: var(--text-mute); }
+.mini-menu button.on { background: color-mix(in srgb, var(--brand) 16%, transparent); color: var(--brand); font-weight: 600; }
+.mini-menu button:active { background: var(--bg-soft); }
+
+/* 缩略图上的状态角标可点 */
+.movie-card .poster .st { cursor: pointer; }
+.movie-card .poster .st::after { content: '▾'; font-size: 8px; margin-left: 3px; opacity: 0.85; }

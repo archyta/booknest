@@ -2327,6 +2327,14 @@
 
     // 书架交互
     $('#view').addEventListener('click', (e) => {
+      const stBadge = e.target.closest('[data-mstat]');
+      if (stBadge) {
+        e.stopPropagation();
+        const id = stBadge.dataset.mstat;
+        const m = movieById(id);
+        if (m) openMiniMenu(stBadge, movieStatusMenuItems(m.status), (key) => setMovieStatus(id, key), '观看状态');
+        return;
+      }
       const movieBtn = e.target.closest('[data-movie]');
       if (movieBtn) {
         openMovieSheet(movieBtn.dataset.movie);
@@ -2351,6 +2359,21 @@
         openMovieSearch();
       }
     });
+
+    $('#miniMenu').addEventListener('click', (e) => {
+      const item = e.target.closest('[data-mm]');
+      if (!item) return;
+      e.stopPropagation();
+      const fn = $('#miniMenu')._onPick;
+      closeMiniMenu();
+      if (fn) fn(item.dataset.mm);
+    });
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('#miniMenu')) return;
+      closeMiniMenu();
+    });
+    window.addEventListener('resize', () => closeMiniMenu());
+    document.addEventListener('scroll', () => closeMiniMenu(), true);
 
     $('#kindSeg').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-mkind]');
@@ -2597,7 +2620,30 @@
       } else if (act === 'movie-collection-import') {
         const cid = action.dataset.cid;
         const missing = Number(action.dataset.missing) || 0;
-        if (!window.confirm(`把这个合集里还没入库的 ${missing} 部影片一次性加入片库？`)) return;
+        // 先让用户选导入后的观看状态，再开始导入
+        e.stopPropagation();
+        openMiniMenu(
+          action,
+          movieStatusMenuItems(state.movieFilters.status || 'wish').map((x) => ({
+            ...x,
+            note: x.key === (state.movieFilters.status || 'wish') ? '默认' : '',
+          })),
+          (status) => runCollectionImport(action, cid, missing, status),
+          `导入 ${missing} 部影片 · 观看状态`
+        );
+        return;
+      } else if (act === 'movie-collection-refresh') {
+        state.movieCollection = null;
+        ensureMovieCollection(true);
+      } else if (act === 'movie-related-refresh') {
+        state.movieRelated = null;
+        ensureMovieRelated(true);
+      }
+    });
+
+    /** 执行合集批量导入 */
+    async function runCollectionImport(action, cid, missing, status) {
+      {
         const label0 = action.textContent;
         action.disabled = true;
         action.textContent = `正在导入 0/${missing}…`;
@@ -2609,11 +2655,12 @@
         try {
           const res = await api('/api/movie-collection/import', {
             method: 'POST',
-            body: { collectionId: cid, movieId: d.movie.id, status: state.movieFilters.status || 'wish' },
+            body: { collectionId: cid, movieId: state.movieDraft && state.movieDraft.movie.id, status },
           });
           clearInterval(tick);
+          const stLabel = (state.movieStatuses[status] || {}).label || status;
           toast(
-            `合集导入完成：新增 ${res.addedCount} 部${res.already ? `，已有 ${res.already} 部` : ''}${
+            `合集导入完成：新增 ${res.addedCount} 部（${stLabel}）${res.already ? `，已有 ${res.already} 部` : ''}${
               res.failedCount ? `，失败 ${res.failedCount} 部` : ''
             }`
           );
@@ -2627,14 +2674,11 @@
           action.disabled = false;
           action.textContent = label0;
         }
-      } else if (act === 'movie-collection-refresh') {
-        state.movieCollection = null;
-        ensureMovieCollection(true);
-      } else if (act === 'movie-related-refresh') {
-        state.movieRelated = null;
-        ensureMovieRelated(true);
       }
-    });
+    }
+
+    // eslint-disable-next-line no-unreachable
+
 
     $('#movieListPickBody').addEventListener('change', (e) => {
       const lp = state.movieListPick;
@@ -3574,6 +3618,76 @@
 
   const MOVIE_STATUS_ORDER = ['wish', 'watching', 'watched', 'dropped'];
 
+  /** 通用小菜单：anchor 旁边弹出，往上/下自适应 */
+  function openMiniMenu(anchor, items, onPick, title) {
+    const menu = $('#miniMenu');
+    if (!menu || !anchor) return;
+    menu.innerHTML =
+      (title ? `<div class="mm-title">${esc(title)}</div>` : '') +
+      items
+        .map(
+          (it) =>
+            `<button data-mm="${esc(it.key || '')}" class="${it.on ? 'on' : ''}"><span>${esc(it.icon || '')}</span>${esc(
+              it.label
+            )}${it.note ? `<span class="n">${esc(it.note)}</span>` : ''}</button>`
+        )
+        .join('');
+    menu.classList.remove('hidden');
+    const r = anchor.getBoundingClientRect();
+    const mw = menu.offsetWidth || 150;
+    const mh = menu.offsetHeight || 160;
+    const left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - mw - 8));
+    let top = r.bottom + 6;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 6);
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+    menu._onPick = onPick;
+  }
+
+  function closeMiniMenu() {
+    const menu = $('#miniMenu');
+    if (menu) {
+      menu.classList.add('hidden');
+      menu._onPick = null;
+    }
+  }
+
+  /** 观看状态菜单项 */
+  function movieStatusMenuItems(current) {
+    return MOVIE_STATUS_ORDER.map((key) => {
+      const st = state.movieStatuses[key] || { label: key, color: '#94a3b8' };
+      return { key, label: st.label, icon: '●', on: current === key };
+    });
+  }
+
+  /** 只改观看状态（卡片上直接操作时用） */
+  async function setMovieStatus(id, status) {
+    const m = movieById(id);
+    if (!m || m.status === status) return;
+    const before = m.status;
+    m.status = status;
+    renderShelf();
+    renderStatusChips();
+    try {
+      const res = await api(`/api/movies/${encodeURIComponent(id)}`, { method: 'PATCH', body: { status } });
+      const idx = state.movies.findIndex((x) => x.id === id);
+      if (idx >= 0) state.movies[idx] = res.movie;
+      const st = state.movieStatuses[status] || {};
+      toast(`已标记为「${st.label || status}」`);
+      api('/api/stats')
+        .then((s) => {
+          state.stats = s;
+          state.movieStats = s.movie || state.movieStats;
+          renderStatusChips();
+        })
+        .catch(() => {});
+    } catch (err) {
+      m.status = before;
+      renderShelf();
+      toast(`保存失败：${err.message}`, 'err');
+    }
+  }
+
   function posterSrc(m) {
     if (!m) return '';
     if (m.poster) return m.poster;
@@ -3643,7 +3757,9 @@
     return `<button class="movie-card" data-movie="${esc(m.id)}">
       <div class="poster">
         ${p ? `<img loading="lazy" src="${esc(p)}" alt="">` : '🎬'}
-        <span class="st" style="background:${esc(st.color)}">${esc(st.label)}</span>
+        <span class="st" data-mstat="${esc(m.id)}" title="点击设置观看状态" style="background:${esc(
+          st.color
+        )}">${esc(st.label)}</span>
         ${m.type === 'tv' ? '<span class="kind">剧集</span>' : ''}
         ${m.rating ? `<span class="rt">★ ${m.rating}</span>` : ''}
       </div>
