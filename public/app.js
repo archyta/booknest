@@ -41,7 +41,7 @@
     movieListSorts: {},
     movieStatuses: {},
     movieStats: {},
-    movieFilters: { status: '', genre: '', tag: '', q: '', sort: 'added-desc', kind: '' },
+    movieFilters: { status: '', genre: '', collection: '', tag: '', q: '', sort: 'added-desc', kind: '' },
     movieDraft: null,
     movieRelated: null,
     movieSearch: { q: '', results: [], sources: [], sourceStatus: [], busy: false, error: '' },
@@ -498,6 +498,10 @@
 
   function renderShelf() {
     if (state.mode === 'movie') return renderMovieShelf();
+    if (state.viewMode === 'collgroup') {
+      state.viewMode = 'group'; // 书籍没有合集，回落为按分类分组
+      updateViewModeBtn();
+    }
     const list = filteredBooks();
     const view = $('#view');
     $('#shelfCount').textContent = state.books.length ? `共 ${state.books.length} 本` : '';
@@ -584,8 +588,23 @@
     const sortSel = $('#sortBy');
     if (state.mode === 'movie') {
       const genres = (state.movieStats.byGenre || []).map((g) => g.name);
+      // 合集列表（按入库数量排序）
+      const collMap = new Map();
+      for (const m of state.movies) {
+        const c = m.collection;
+        if (c && c.id) collMap.set(String(c.id), { id: String(c.id), name: c.name || '未命名合集', n: (collMap.get(String(c.id)) || { n: 0 }).n + 1 });
+      }
+      const colls = [...collMap.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name, 'zh-Hans-CN'));
       catSel.innerHTML =
-        `<option value="">全部类型</option>` + genres.map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('');
+        `<option value="">全部类型 / 合集</option>` +
+        `<optgroup label="类型">${genres
+          .map((g) => `<option value="g:${esc(g)}">${esc(g)}</option>`)
+          .join('')}</optgroup>` +
+        (colls.length
+          ? `<optgroup label="合集">${colls
+              .map((c) => `<option value="c:${esc(c.id)}">${esc(c.name)}（${c.n}）</option>`)
+              .join('')}</optgroup>`
+          : '');
       tagSel.innerHTML =
         `<option value="">全部标签</option>` + state.tags.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');
       sortSel.innerHTML = [
@@ -602,7 +621,11 @@
       ]
         .map(([k, label]) => `<option value="${k}">${label}</option>`)
         .join('');
-      catSel.value = state.movieFilters.genre;
+      catSel.value = state.movieFilters.collection
+        ? `c:${state.movieFilters.collection}`
+        : state.movieFilters.genre
+        ? `g:${state.movieFilters.genre}`
+        : '';
       tagSel.value = state.movieFilters.tag;
       sortSel.value = state.movieFilters.sort;
       $('#searchInput').value = state.movieFilters.q;
@@ -2353,7 +2376,7 @@
         state.filters = { status: '', category: '', tag: '', q: '', sort: 'added-desc', tagIds: [] };
         renderAll();
       } else if (action.dataset.action === 'clear-movie-filters') {
-        state.movieFilters = { status: '', genre: '', tag: '', q: '', sort: 'added-desc', kind: '' };
+        state.movieFilters = { status: '', genre: '', collection: '', tag: '', q: '', sort: 'added-desc', kind: '' };
         renderAll();
       } else if (action.dataset.action === 'open-movie-search') {
         openMovieSearch();
@@ -2399,7 +2422,17 @@
     });
     $('#filterCategory').addEventListener('change', (e) => {
       if (state.mode === 'movie') {
-        state.movieFilters.genre = e.target.value;
+        const v = e.target.value;
+        if (v.startsWith('c:')) {
+          state.movieFilters.collection = v.slice(2);
+          state.movieFilters.genre = '';
+        } else if (v.startsWith('g:')) {
+          state.movieFilters.genre = v.slice(2);
+          state.movieFilters.collection = '';
+        } else {
+          state.movieFilters.genre = '';
+          state.movieFilters.collection = '';
+        }
         renderShelf();
         return;
       }
@@ -2834,11 +2867,14 @@
       renderMovieLists();
     });
 
-    $('#btnViewMode').addEventListener('click', () => {      const order = ['grid', 'list', 'group'];
-      state.viewMode = order[(order.indexOf(state.viewMode) + 1) % order.length];
+    $('#btnViewMode').addEventListener('click', () => {
+      const order = state.mode === 'movie' ? ['grid', 'list', 'group', 'collgroup'] : ['grid', 'list', 'group'];
+      let idx = order.indexOf(state.viewMode);
+      if (idx < 0) idx = 0;
+      state.viewMode = order[(idx + 1) % order.length];
       localStorage.setItem('bn.viewMode', state.viewMode);
-      $('#btnViewMode').textContent = state.viewMode === 'grid' ? '▦' : state.viewMode === 'list' ? '☰' : '⊞';
-      toast(state.viewMode === 'grid' ? '网格视图' : state.viewMode === 'list' ? '列表视图' : '按分类分组');
+      updateViewModeBtn();
+      toast(viewModeLabel());
       renderShelf();
     });
 
@@ -3709,6 +3745,7 @@
     let list = state.movies.slice();
     if (f.kind) list = list.filter((m) => (m.type === 'tv' ? 'tv' : 'movie') === f.kind);
     if (f.status) list = list.filter((m) => m.status === f.status);
+    if (f.collection) list = list.filter((m) => String((m.collection || {}).id || '') === String(f.collection));
     if (f.genre) list = list.filter((m) => (m.genres || []).includes(f.genre));
     if (f.tag) list = list.filter((m) => (m.tags || []).includes(f.tag));
     if (q) {
@@ -3791,6 +3828,25 @@
   }
 
   /** 片库：标题栏里平铺的 全部 / 电影 / 剧集 分段控件（带数量） */
+  const VIEW_MODE_META = {
+    grid: { icon: '▦', label: '网格视图' },
+    list: { icon: '☰', label: '列表视图' },
+    group: { icon: '⊞', label: '按类型 / 影剧分组' },
+    collgroup: { icon: '⧉', label: '按合集分组' },
+  };
+
+  function viewModeLabel() {
+    return (VIEW_MODE_META[state.viewMode] || VIEW_MODE_META.grid).label;
+  }
+
+  function updateViewModeBtn() {
+    const btn = $('#btnViewMode');
+    if (!btn) return;
+    const meta = VIEW_MODE_META[state.viewMode] || VIEW_MODE_META.grid;
+    btn.textContent = meta.icon;
+    btn.title = meta.label + '（点击切换）';
+  }
+
   function renderKindSwitch() {
     const box = $('#kindSeg');
     if (!box) return;
@@ -3823,7 +3879,12 @@
     if (countEl) countEl.textContent = state.movies.length ? `共 ${state.movies.length} 部` : '';
     const kindLabel = state.movieFilters.kind === 'movie' ? '电影' : state.movieFilters.kind === 'tv' ? '剧集' : '';
     const statusLabel = (state.movieStatuses[state.movieFilters.status] || {}).label || '';
-    const rightTags = [kindLabel, statusLabel].filter(Boolean).join(' · ') || '全部';
+    const collName =
+      (state.movieFilters.collection &&
+        ((state.movies.find((m) => String((m.collection || {}).id || '') === String(state.movieFilters.collection)) || {})
+          .collection || {}).name) ||
+      '';
+    const rightTags = [collName, state.movieFilters.genre, kindLabel, statusLabel].filter(Boolean).join(' · ') || '全部';
     const summary = `<div class="shelf-summary"><span>当前显示 ${list.length} 部${
       kindLabel ? `（${esc(kindLabel)}）` : ''
     }${state.movieFilters.q ? ` · 搜索「${esc(state.movieFilters.q)}」` : ''}</span><span>${esc(rightTags)}</span></div>`;
@@ -3843,6 +3904,28 @@
     }
     if (state.viewMode === 'list') {
       view.innerHTML = `${summary}<div class="list">${list.map(movieRowHtml).join('')}</div>`;
+      return;
+    }
+    if (state.viewMode === 'collgroup') {
+      // 按合集（系列）分组；不属于任何合集的归入"未归类"
+      const groups = new Map();
+      for (const m of list) {
+        const name = (m.collection && m.collection.name) || '未归类';
+        if (!groups.has(name)) groups.set(name, []);
+        groups.get(name).push(m);
+      }
+      const html = Array.from(groups.entries())
+        .sort((a, b) => (a[0] === '未归类' ? 1 : b[0] === '未归类' ? -1 : b[1].length - a[1].length))
+        .map(
+          ([name, items]) =>
+            `<div class="group-title"><span class="chip" style="font-weight:700">${esc(name)}</span>
+             <span style="color:var(--text-mute);font-weight:400">${items.length} 部${
+              name !== '未归类' && items.some((x) => x.year) ? ` · ${items.filter((x) => x.year).map((x) => x.year).sort()[0]} 起` : ''
+            }</span></div>
+             <div class="movie-grid">${items.map(movieCardHtml).join('')}</div>`
+        )
+        .join('');
+      view.innerHTML = summary + html;
       return;
     }
     if (state.viewMode === 'group') {
@@ -4814,7 +4897,7 @@
   }
 
   async function main() {
-    $('#btnViewMode').textContent = state.viewMode === 'grid' ? '▦' : state.viewMode === 'list' ? '☰' : '⊞';
+    updateViewModeBtn();
     bindEvents();
     // 记住上次停在哪一侧：书 / 影 一级菜单高亮
     $$('#tabbar button').forEach((b) =>
