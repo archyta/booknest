@@ -406,6 +406,24 @@ function fromTmdbDetail(data, mediaType) {
       crew.filter((c) => /Writer|Screenplay|Story|Creator/i.test(c.job || '')).map((c) => clean(c.name))
     ).slice(0, 6),
     actors: unique(cast.map((c) => clean(c.name))).slice(0, 20),
+    // 人物（带 TMDb id）：点导演/演员时据此拉全部作品，避免用中文名去搜人搜不到
+    people: (() => {
+      const out = [];
+      const push = (p, job, character) => {
+        if (!p || !p.id || !p.name) return;
+        const name = clean(p.name);
+        if (!name) return;
+        if (out.some((x) => String(x.id) === String(p.id) && x.job === job)) return;
+        out.push({ id: String(p.id), name, job, character: clean(character || '') });
+      };
+      for (const c of crew) {
+        const job = String(c.job || '');
+        if (/^Director$/i.test(job)) push(c, 'director');
+        else if (/Writer|Screenplay|Story|Creator/i.test(job)) push(c, 'writer');
+      }
+      for (const c of cast.slice(0, 24)) push(c, 'actor', c.character);
+      return out.slice(0, 40);
+    })(),
     genres: unique((data.genres || []).map((g) => clean(g.name))),
     // 有制片国家就用全称，否则退回 ISO 国家码，避免「美国 / US」这种重复
     countries: prodCountries.length ? prodCountries : unique((data.origin_country || []).map((c) => clean(c))),
@@ -502,6 +520,20 @@ function mergeRecords(records) {
     for (const r of list) for (const v of r[field] || []) if (v && !out.includes(v)) out.push(v);
     return out;
   };
+  const unionPeople = () => {
+    const out = [];
+    const seen = new Set();
+    for (const r of list) {
+      for (const p of r.people || []) {
+        if (!p || !p.name) continue;
+        const key = `${p.id || p.name}|${p.job || ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(p);
+      }
+    }
+    return out.slice(0, 40);
+  };
 
   const ids = {};
   for (const r of list) {
@@ -538,6 +570,7 @@ function mergeRecords(records) {
     type: list.some((r) => r.type === 'tv') && primary.type === 'tv' ? 'tv' : primary.type || prefer('type') || 'movie',
     directors: union('directors'),
     writers: union('writers'),
+    people: unionPeople(),
     actors: preferCJK('actors', []).slice(0, 20),
     genres: preferListCJK('genres'),
     countries: preferListCJK('countries'),
@@ -668,6 +701,107 @@ function withTimeout(promise, ms) {
     Promise.resolve(promise).catch(() => null),
     new Promise((resolve) => setTimeout(() => resolve(null), ms)),
   ]);
+}
+
+/**
+ * 按姓名找 TMDb 人物（拿不到 id 时的兜底）。
+ * TMDb 的人名搜索按相关度排序，同名冷门条目会排在前面（实测「刘德华」首位只有 1 条记录），
+ * 所以按 人气 + 所属部门是否匹配 重新挑，并对前几名逐个验证有没有作品。
+ */
+async function searchPerson(name, role, apiKey) {
+  const data = await tmdbGet('/search/person', apiKey, { query: String(name || '') });
+  const list = (data.results || []).filter((p) => p && p.id);
+  if (!list.length) return null;
+  const want = role === 'director' ? 'Directing' : role === 'writer' ? 'Writing' : role === 'actor' ? 'Acting' : '';
+  const score = (p) => (Number(p.popularity) || 0) + (want && p.known_for_department === want ? 5 : 0);
+  const ranked = list.slice().sort((a, b) => score(b) - score(a));
+  // 逐个试前 3 名，取第一个确实有作品的人
+  for (const cand of ranked.slice(0, 3)) {
+    try {
+      const credits = await tmdbGet(`/person/${cand.id}/combined_credits`, apiKey, {});
+      if ((credits.cast || []).length + (credits.crew || []).length > 0) return { person: cand, credits };
+    } catch (err) {
+      /* 试下一个 */
+    }
+  }
+  return { person: ranked[0], credits: null };
+}
+
+/**
+ * 拉某个人的全部作品（导演/编剧/演员）
+ * @param {{tmdbId?:string, name?:string, role?:string}} query
+ */
+async function personWorks(query, apiKey) {
+  let personId = String(query.tmdbId || '');
+  let person = null;
+  let credits = null;
+  if (!personId) {
+    const found = await searchPerson(query.name, query.role, apiKey);
+    if (!found) throw new Error(`TMDb 里找不到「${query.name}」这个人（用 TMDb / IMDb 来源的影片点进去更准）`);
+    person = found.person;
+    credits = found.credits;
+    personId = String(person.id);
+  }
+  if (!person) {
+    try {
+      person = await tmdbGet(`/person/${personId}`, apiKey, {});
+    } catch (err) {
+      person = null;
+    }
+  }
+  if (!credits) credits = await tmdbGet(`/person/${personId}/combined_credits`, apiKey, {});
+  const role = String(query.role || '');
+  const out = [];
+  const seen = new Set();
+  const push = (c, job) => {
+    if (!c || !c.id || !c.title) return;
+    const mediaType = c.media_type === 'tv' ? 'tv' : 'movie';
+    const key = `${mediaType}/${c.id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({
+      source: 'tmdb',
+      sourceLabel: 'TMDb',
+      sourceId: key,
+      tmdbId: String(c.id),
+      title: clean(c.title || c.name || ''),
+      originalTitle: clean(c.original_title || c.original_name || ''),
+      year: String(c.release_date || c.first_air_date || '').slice(0, 4),
+      poster: c.poster_path ? TMDB_IMG + c.poster_path : '',
+      rating: c.vote_average ? Math.round(c.vote_average * 10) / 10 : 0,
+      ratingCount: c.vote_count || 0,
+      type: mediaType,
+      role: job,
+      character: clean(c.character || ''),
+      department: clean(c.department || ''),
+    });
+  };
+  for (const c of credits.crew || []) {
+    const job = String(c.job || '');
+    if (/^Director$/i.test(job)) push(c, 'director');
+    else if (/Writer|Screenplay|Story|Creator/i.test(job)) push(c, 'writer');
+  }
+  for (const c of credits.cast || []) push(c, 'actor');
+  let works = out;
+  if (role === 'director' || role === 'writer') works = out.filter((x) => x.role === role);
+  else if (role === 'actor') works = out.filter((x) => x.role === 'actor');
+  return {
+    person: {
+      id: personId,
+      name: clean((person && person.name) || query.name || ''),
+      profile: person && person.profile_path ? TMDB_IMG + person.profile_path : '',
+      department: clean((person && person.known_for_department) || ''),
+      birthday: clean((person && person.birthday) || ''),
+      place: clean((person && person.place_of_birth) || ''),
+    },
+    counts: {
+      total: out.length,
+      director: out.filter((x) => x.role === 'director').length,
+      writer: out.filter((x) => x.role === 'writer').length,
+      actor: out.filter((x) => x.role === 'actor').length,
+    },
+    works,
+  };
 }
 
 /** 取 TMDb 合集（系列）的全部影片，用于详情页"合集"区块与一键补齐 */
@@ -967,6 +1101,7 @@ module.exports = {
   search,
   lookup,
   tmdbCollection,
+  personWorks,
   checkSources,
   setDoubanCookie,
   searchDoubanRexxar,

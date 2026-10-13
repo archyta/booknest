@@ -47,6 +47,7 @@
     movieSearch: { q: '', results: [], sources: [], sourceStatus: [], busy: false, error: '' },
     movieSources: [],
     movieCollection: null,
+    person: null,
     movieListPick: null,
     movieCurrentListId: '',
     creatingMovieList: false,
@@ -2289,6 +2290,7 @@
         else if (sheetId === 'sheetMovieSearch')
           state.movieSearch = { q: '', results: [], sources: [], sourceStatus: [], busy: false, error: '' };
         else if (sheetId === 'sheetMovieListPick') state.movieListPick = null;
+        else if (sheetId === 'sheetPerson') state.person = null;
       })
     );
 
@@ -2509,6 +2511,11 @@
         openMovieSheet(sim.dataset.movie);
         return;
       }
+      const person = e.target.closest('[data-person]');
+      if (person) {
+        openPersonWorks(person.dataset.person, person.dataset.pid, person.dataset.role);
+        return;
+      }
       const cand = e.target.closest('[data-movie-add]');
       if (cand) {
         const [source, sourceId, title, year] = cand.dataset.movieAdd.split('|');
@@ -2712,6 +2719,36 @@
 
     // eslint-disable-next-line no-unreachable
 
+
+    $('#personBody').addEventListener('change', (e) => {
+      const p = state.person;
+      if (!p) return;
+      if (e.target.id === 'personFilter') {
+        p.filter = e.target.value;
+        renderPerson();
+      } else if (e.target.id === 'personSort') {
+        p.sort = e.target.value;
+        localStorage.setItem('bn.personSort', p.sort);
+        renderPerson();
+      }
+    });
+    $('#personBody').addEventListener('click', async (e) => {
+      const p = state.person;
+      if (!p) return;
+      const owned = e.target.closest('[data-movie]');
+      if (owned) {
+        if (owned.dataset.movie) openMovieSheet(owned.dataset.movie);
+        return;
+      }
+      const add = e.target.closest('[data-movie-add]');
+      if (add) {
+        const [source, sourceId, title, year] = add.dataset.movieAdd.split('|');
+        await pickMovieResult(source, sourceId, title, year);
+        return;
+      }
+      const action = e.target.closest('[data-action]');
+      if (action && action.dataset.action === 'person-refresh') loadPersonWorks(true);
+    });
 
     $('#movieListPickBody').addEventListener('change', (e) => {
       const lp = state.movieListPick;
@@ -4031,6 +4068,16 @@
     const info = (k, v) =>
       v ? `<div class="kv"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>` : '';
     const runtime = (m.durations || []).join(' / ');
+    // 把人物名字渲染成可点的（带 TMDb 人 id，没 id 时按名字兜底）
+    const peopleLinks = (names, role) =>
+      (names || [])
+        .map((n) => {
+          const hit = (m.people || []).find((x) => x.name === n && (!role || x.job === role)) || (m.people || []).find((x) => x.name === n);
+          return `<button class="person-link" data-person="${esc(n)}" data-pid="${esc((hit && hit.id) || '')}" data-role="${esc(
+            role || ''
+          )}">${esc(n)}</button>`;
+        })
+        .join(' / ');
 
     return `
       <div class="hint" style="margin-bottom:10px">${
@@ -4149,9 +4196,21 @@
           <span>▾ 详细信息${d.showDetails === false ? '（已收起）' : '（可手动修改）'}</span>
         </button>
         <div class="${d.showDetails === false ? 'hidden' : ''}" id="movieDetails">
-          ${info('导演', (m.directors || []).join(' / '))}
-          ${info('编剧', (m.writers || []).join(' / '))}
-          ${info('主演', (m.actors || []).join(' / '))}
+          ${
+            (m.directors || []).length
+              ? `<div class="kv"><span class="k">导演</span><span class="v">${peopleLinks(m.directors, 'director')}</span></div>`
+              : ''
+          }
+          ${
+            (m.writers || []).length
+              ? `<div class="kv"><span class="k">编剧</span><span class="v">${peopleLinks(m.writers, 'writer')}</span></div>`
+              : ''
+          }
+          ${
+            (m.actors || []).length
+              ? `<div class="kv"><span class="k">主演</span><span class="v">${peopleLinks((m.actors || []).slice(0, 12), 'actor')}</span></div>`
+              : ''
+          }
           ${info('类型', (m.genres || []).join(' / '))}
           ${info('国家/地区', (m.countries || []).join(' / '))}
           ${info('语言', (m.languages || []).join(' / '))}
@@ -4338,6 +4397,153 @@
       .filter((x) => x.score >= 2)
       .sort((a, b) => b.score - a.score)
       .slice(0, 10);
+  }
+
+  /** 点导演 / 编剧 / 主演 → 列出这个人的全部作品 */
+  async function openPersonWorks(name, tmdbId, role) {
+    state.person = {
+      name,
+      tmdbId: tmdbId || '',
+      role: role || '',
+      filter: 'all',
+      sort: localStorage.getItem('bn.personSort') || 'year-desc',
+      works: [],
+      counts: null,
+      loading: true,
+      error: '',
+    };
+    renderPerson();
+    openSheet('#sheetPerson');
+    await loadPersonWorks();
+  }
+
+  async function loadPersonWorks(force) {
+    const p = state.person;
+    if (!p) return;
+    p.loading = true;
+    p.error = '';
+    renderPerson();
+    try {
+      const qs = new URLSearchParams({ role: p.role || '' });
+      if (p.tmdbId) qs.set('tmdbId', p.tmdbId);
+      else qs.set('name', p.name);
+      if (force) qs.set('force', '1');
+      const res = await api(`/api/person-works?${qs.toString()}`);
+      p.person = res.person || { name: p.name };
+      p.counts = res.counts || null;
+      p.works = res.works || [];
+      p.error = res.error || '';
+    } catch (err) {
+      p.error = err.message;
+      p.works = [];
+    }
+    p.loading = false;
+    renderPerson();
+  }
+
+  function renderPerson() {
+    const p = state.person;
+    const body = $('#personBody');
+    if (!p || !body) return;
+    const person = p.person || { name: p.name };
+    const counts = p.counts || {};
+    const roleNames = { director: '导演', writer: '编剧', actor: '演员' };
+    const filters = [
+      ['all', '全部', p.works.length],
+      ['director', '导演', counts.director || 0],
+      ['writer', '编剧', counts.writer || 0],
+      ['actor', '演员', counts.actor || 0],
+    ].filter((f) => f[0] === 'all' || f[2] > 0);
+
+    let list = p.works.slice();
+    if (p.filter !== 'all') list = list.filter((w) => w.role === p.filter);
+    const year = (w) => Number(String(w.year || '').match(/\d{4}/) || 0);
+    const sorters = {
+      'year-desc': (a, b) => year(b) - year(a),
+      'year-asc': (a, b) => (year(a) || 9999) - (year(b) || 9999),
+      'rating-desc': (a, b) => (b.rating || 0) - (a.rating || 0),
+      'votes-desc': (a, b) => (b.ratingCount || 0) - (a.ratingCount || 0),
+      'title-asc': (a, b) => String(a.title).localeCompare(String(b.title), 'zh-Hans-CN'),
+    };
+    list.sort(sorters[p.sort] || sorters['year-desc']);
+
+    $('#personTitle').textContent = `${person.name || p.name} · 全部作品`;
+    body.innerHTML = `
+      <div class="person-head">
+        <div class="avatar">${
+          person.profile ? `<img src="${esc(person.profile)}" alt="">` : '👤'
+        }</div>
+        <div style="min-width:0">
+          <h3>${esc(person.name || p.name)}</h3>
+          <div class="sub">${esc(
+            [
+              person.department === 'Directing' ? '导演' : person.department === 'Writing' ? '编剧' : person.department === 'Acting' ? '演员' : person.department || '',
+              person.birthday ? `${person.birthday.slice(0, 4)} 年生` : '',
+              person.place || '',
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          )}</div>
+          <div class="sub" style="margin-top:3px">共 ${counts.total || p.works.length} 部作品${
+            counts.director ? ` · 导演 ${counts.director}` : ''
+          }${counts.writer ? ` · 编剧 ${counts.writer}` : ''}${counts.actor ? ` · 演员 ${counts.actor}` : ''}</div>
+        </div>
+      </div>
+      <div class="field-row" style="align-items:center;margin-bottom:10px">
+        <select id="personFilter" style="flex:0 0 96px;height:36px;border-radius:10px;border:1px solid var(--line);background:var(--bg-elev);padding:0 8px;font-size:12.5px">
+          ${filters.map(([k, label, n]) => `<option value="${k}" ${p.filter === k ? 'selected' : ''}>${esc(label)}${n ? ` ${n}` : ''}</option>`).join('')}
+        </select>
+        <select id="personSort" style="flex:1;height:36px;border-radius:10px;border:1px solid var(--line);background:var(--bg-elev);padding:0 8px;font-size:12.5px">
+          ${[
+            ['year-desc', '时间：新 → 旧'],
+            ['year-asc', '时间：旧 → 新'],
+            ['rating-desc', '评分：高 → 低'],
+            ['votes-desc', '评价人数：多 → 少'],
+            ['title-asc', '片名 A→Z'],
+          ]
+            .map(([k, label]) => `<option value="${k}" ${p.sort === k ? 'selected' : ''}>${esc(label)}</option>`)
+            .join('')}
+        </select>
+      </div>
+      ${
+        p.loading
+          ? '<div class="center"><span class="spinner"></span> 正在获取作品列表…</div>'
+          : p.error
+          ? `<div class="hint" style="color:#f59e0b">${esc(p.error)}</div>`
+          : list.length
+          ? `<div>${list
+              .map(
+                (w) => `<button class="person-work" ${
+                  w.owned
+                    ? `data-movie="${esc((state.movies.find((x) => String(x.tmdbId || '') === String(w.tmdbId)) || {}).id || '')}"`
+                    : `data-movie-add="tmdb|${esc(w.sourceId)}|${esc(w.title)}|${esc(w.year || '')}"`
+                }>
+                  <div class="poster">${w.poster ? `<img loading="lazy" src="${esc(w.poster)}" alt="">` : '🎬'}</div>
+                  <div class="info">
+                    <div class="t">${esc(w.title)}</div>
+                    <div class="s">${esc(
+                      [
+                        w.year || '',
+                        w.rating ? `★ ${w.rating}` : '',
+                        w.ratingCount ? `${w.ratingCount > 10000 ? (w.ratingCount / 10000).toFixed(1) + '万' : w.ratingCount} 人评` : '',
+                        w.type === 'tv' ? '剧集' : '',
+                        w.character ? `饰 ${w.character}` : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')
+                    )}</div>
+                  </div>
+                  <span class="badge ${w.owned ? 'owned' : ''}">${
+                  w.owned ? '已在片库' : roleNames[w.role] || '加入'
+                }</span>
+                </button>`
+              )
+              .join('')}</div>`
+          : '<div class="center">没有找到这个人的作品</div>'
+      }
+      <div class="btn-row" style="margin-top:14px">
+        <button class="btn ghost sm" data-action="person-refresh">↻ 重新获取</button>
+      </div>`;
   }
 
   /** 影片合集（007系列 / 漫威 / 哈利波特…）：TMDb belongs_to_collection */

@@ -735,6 +735,12 @@ function normalizeMovieInput(input = {}, base = {}) {
     tmdbId: pickStr('tmdbId'),
     sourceUrls: input.sourceUrls && typeof input.sourceUrls === 'object' ? input.sourceUrls : base.sourceUrls || {},
     writers: pickArr('writers'),
+    people: Array.isArray(input.people || base.people)
+      ? (input.people || base.people || [])
+          .filter((p) => p && p.name)
+          .map((p) => ({ id: String(p.id || ''), name: String(p.name), job: String(p.job || ''), character: String(p.character || '') }))
+          .slice(0, 40)
+      : [],
     collection: (() => {
       const c = input.collection !== undefined ? input.collection : base.collection;
       if (!c || !c.id) return base.collection || null;

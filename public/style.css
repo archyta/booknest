@@ -658,3 +658,26 @@ a { color: var(--brand); }
 /* 缩略图上的状态角标可点 */
 .movie-card .poster .st { cursor: pointer; }
 .movie-card .poster .st::after { content: '▾'; font-size: 8px; margin-left: 3px; opacity: 0.85; }
+
+/* 人物（导演/编剧/演员）可点 */
+.person-link {
+  display: inline-block; padding: 0 2px; color: var(--brand); background: none; border: none; font: inherit;
+  text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; cursor: pointer;
+}
+.person-link:active { opacity: 0.7; }
+.person-head { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+.person-head .avatar {
+  width: 60px; height: 60px; border-radius: 50%; overflow: hidden; flex: none; background: var(--bg-soft);
+  display: grid; place-items: center; font-size: 22px; color: var(--text-mute);
+}
+.person-head .avatar img { width: 100%; height: 100%; object-fit: cover; }
+.person-head h3 { margin: 0 0 3px; font-size: 16px; }
+.person-head .sub { font-size: 11.5px; color: var(--text-mute); }
+.person-work { display: flex; gap: 10px; align-items: center; width: 100%; padding: 8px 4px; border-bottom: 1px solid var(--line); text-align: left; }
+.person-work .poster { width: 42px; height: 62px; border-radius: 6px; overflow: hidden; background: var(--bg-soft); flex: none; display: grid; place-items: center; color: var(--text-mute); }
+.person-work .poster img { width: 100%; height: 100%; object-fit: cover; }
+.person-work .info { flex: 1; min-width: 0; }
+.person-work .t { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.person-work .s { font-size: 11.5px; color: var(--text-mute); margin-top: 2px; }
+.person-work .badge { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; background: var(--bg-soft); color: var(--text-mute); flex: none; }
+.person-work .badge.owned { background: color-mix(in srgb, var(--ok, #16a34a) 18%, transparent); color: #16a34a; }

@@ -831,6 +831,36 @@ async function handleApi(req, res, url) {
     }
   }
 
+  /** 某个导演/编剧/演员的全部作品 */
+  if (p === '/api/person-works' && req.method === 'GET') {
+    const key = tmdbKey();
+    if (!key) return sendJson(res, 200, { works: [], error: '需要 TMDb API Key（设置页填写）' });
+    const name = String(q.get('name') || '').trim();
+    const tmdbId = String(q.get('tmdbId') || '').trim();
+    const role = String(q.get('role') || '').trim();
+    if (!name && !tmdbId) return sendJson(res, 400, { error: '缺少人物信息' });
+    const cacheKey = `person:v1:${tmdbId || name}:${role}`;
+    const cached = store.cache.get(cacheKey);
+    let data;
+    if (cached && Date.now() - cached.ts < 3 * 24 * 3600 * 1000 && q.get('force') !== '1') {
+      data = cached.data;
+    } else {
+      try {
+        data = await movie.personWorks({ tmdbId, name, role }, key);
+        store.cache.set(cacheKey, { ts: Date.now(), data });
+      } catch (err) {
+        return sendJson(res, 200, { works: [], error: err.message || '抓取失败' });
+      }
+    }
+    const ownedIds = new Set(store.listMovies().map((x) => String(x.tmdbId || '')).filter(Boolean));
+    const ownedTitles = new Set(store.listMovies().map((x) => String(x.title || '').trim()));
+    const works = (data.works || []).map((w) => ({
+      ...w,
+      owned: ownedIds.has(String(w.tmdbId)) || ownedTitles.has(String(w.title || '').trim()),
+    }));
+    return sendJson(res, 200, { person: data.person, counts: data.counts, works, cached: !!cached });
+  }
+
   const movieCollectionMatch = p.match(/^\/api\/movies\/([^/]+)\/collection$/);
   if (movieCollectionMatch && req.method === 'GET') {
     applyDoubanCookie();
