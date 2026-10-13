@@ -76,8 +76,11 @@ async function googleByIsbn(isbn) {
 }
 
 async function googleByTitle(title) {
+  // 中文书名优先要中文版本：hl=zh-CN 让返回的简介/标题走中文，langRestrict 限定中文出版物
+  const isCJK = /[\u3400-\u9fff]/.test(String(title || ''));
+  const lang = isCJK ? '&langRestrict=zh-CN&hl=zh-CN' : '&hl=zh-CN';
   const data = await googleJson(
-    `https://www.googleapis.com/books/v1/volumes?q=intitle:${encodeURIComponent(title)}&country=US&maxResults=3`
+    `https://www.googleapis.com/books/v1/volumes?q=intitle:${encodeURIComponent(title)}&country=US&maxResults=5${lang}`
   );
   const item = (data.items || [])[0];
   if (!item || !item.volumeInfo) {

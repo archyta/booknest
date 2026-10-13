@@ -362,7 +362,7 @@ async function searchTmdb(keyword, apiKey) {
       sourceLabel: 'TMDb',
       sourceId: `${it.media_type}/${it.id}`,
       title: clean(it.title || it.name || ''),
-      subtitle: '',
+      subtitle: clean(it.original_title || it.original_name || '') === clean(it.title || it.name || '') ? '' : clean(it.original_title || it.original_name || ''),
       year: String(it.release_date || it.first_air_date || '').slice(0, 4),
       poster: it.poster_path ? TMDB_IMG + it.poster_path : '',
       type: it.media_type === 'tv' ? 'tv' : 'movie',
@@ -378,6 +378,15 @@ function fromTmdbDetail(data, mediaType) {
   const cast = (data.credits && data.credits.cast) || [];
   const prodCountries = unique((data.production_countries || []).map((c) => clean(c.name)));
   const imdbId = String(data.imdb_id || (data.external_ids && data.external_ids.imdb_id) || '');
+  // 中文别名：zh-CN 主标题缺失时（多为未引进/未上映片）用它兜底
+  const zhAlt = unique(
+    ((data.alternative_titles && data.alternative_titles.titles) || [])
+      .filter((t) => /^(CN|TW|HK|SG)$/i.test(t.iso_3166_1 || '') && hasCJK(t.title))
+      .map((t) => clean(t.title))
+  );
+  const rawTitle = clean(data.title || data.name || '');
+  const rawOriginal = clean(data.original_title || data.original_name || '');
+  const zhTitle = hasCJK(rawTitle) ? rawTitle : zhAlt[0] || rawTitle;
   return {
     source: 'tmdb',
     sourceLabel: 'TMDb',
@@ -386,8 +395,8 @@ function fromTmdbDetail(data, mediaType) {
     tmdbId: String(data.id),
     imdbId,
     doubanId: '',
-    title: clean(data.title || data.name || ''),
-    originalTitle: clean(data.original_title || data.original_name || ''),
+    title: zhTitle,
+    originalTitle: hasCJK(zhTitle) && !hasCJK(rawOriginal) ? rawOriginal || rawTitle : rawOriginal,
     year: String(data.release_date || data.first_air_date || '').slice(0, 4),
     type: isTv ? 'tv' : 'movie',
     directors: unique(
@@ -403,7 +412,7 @@ function fromTmdbDetail(data, mediaType) {
     languages: unique((data.spoken_languages || []).map((l) => clean(l.name))),
     durations: data.runtime ? [`${data.runtime}分钟`] : isTv && data.episode_run_time && data.episode_run_time[0] ? [`${data.episode_run_time[0]}分钟`] : [],
     releaseDates: [data.release_date || data.first_air_date || ''].filter(Boolean),
-    aka: unique((data.alternative_titles && data.alternative_titles.titles) || []),
+    aka: unique([...(zhAlt || []), ...((data.alternative_titles && data.alternative_titles.titles) || []).map((t) => clean(t.title))]).slice(0, 10),
     poster: data.poster_path ? TMDB_IMG_ORIG + data.poster_path : '',
     summary: cleanMultiline(data.overview || ''),
     rating: data.vote_average ? Math.round(data.vote_average * 10) / 10 : 0,
@@ -420,7 +429,7 @@ async function tmdbDetail(sourceId, apiKey) {
   const [mediaType, id] = String(sourceId || '').split('/');
   if (!/^\d+$/.test(String(id || ''))) throw new Error('TMDb id 无效');
   const data = await tmdbGet(`/${mediaType === 'tv' ? 'tv' : 'movie'}/${id}`, apiKey, {
-    append_to_response: 'credits,recommendations,similar,external_ids',
+    append_to_response: 'credits,recommendations,similar,external_ids,alternative_titles',
   });
   const record = fromTmdbDetail(data, mediaType);
   // TMDb 提供两路"相似"信号，分别标注来源，便于和豆瓣的推荐交叉比对
@@ -446,6 +455,8 @@ async function tmdbDetail(sourceId, apiKey) {
 
 const SOURCE_RANK = { douban: 0, imdb: 1, tmdb: 2 };
 const isLatin = (s) => /^[\x00-\x7F\s]+$/.test(String(s || '')) && /[A-Za-z]{3}/.test(String(s || ''));
+/** 是否含中日韩汉字（用于"简体中文优先"的取值判断） */
+const hasCJK = (s) => /[\u3400-\u9fff\uf900-\ufaff]/.test(String(s || ''));
 
 function nonEmpty(v) {
   if (Array.isArray(v)) return v.length > 0;
@@ -467,6 +478,16 @@ function mergeRecords(records) {
   const prefer = (field, fallback = '') => {
     for (const r of list) if (nonEmpty(r[field])) return r[field];
     return fallback;
+  };
+  /** 简体中文优先：先取含汉字的那个来源，都没有再按来源优先级 */
+  const preferCJK = (field, fallback = '') => {
+    for (const r of list) if (hasCJK(r[field]) && nonEmpty(r[field])) return r[field];
+    return prefer(field, fallback);
+  };
+  /** 列表字段（类型/国家/语言/时长）：优先取含汉字的数组 */
+  const preferListCJK = (field) => {
+    for (const r of list) if (Array.isArray(r[field]) && r[field].some((x) => hasCJK(x))) return r[field];
+    return prefer(field, []);
   };
   const union = (field) => {
     const out = [];
@@ -492,21 +513,32 @@ function mergeRecords(records) {
     sourceLabel: primary.sourceLabel,
     sourceId: primary.sourceId,
     ...ids,
-    title: prefer('title'),
-    originalTitle: prefer('originalTitle'),
+    title: preferCJK('title'),
+    // 中文名做主标题时，原文名/英文名放到副标题位置
+    originalTitle: (() => {
+      const zh = preferCJK('title');
+      if (!hasCJK(zh)) return prefer('originalTitle');
+      for (const r of list) {
+        if (r.originalTitle && !hasCJK(r.originalTitle) && r.originalTitle !== zh) return r.originalTitle;
+      }
+      for (const r of list) {
+        if (r.title && !hasCJK(r.title) && r.title !== zh) return r.title;
+      }
+      return prefer('originalTitle');
+    })(),
     year: prefer('year'),
     type: list.some((r) => r.type === 'tv') && primary.type === 'tv' ? 'tv' : primary.type || prefer('type') || 'movie',
     directors: union('directors'),
     writers: union('writers'),
-    actors: prefer('actors', []).slice(0, 20),
-    genres: prefer('genres', []),
-    countries: prefer('countries', []),
-    languages: prefer('languages', []),
-    durations: prefer('durations', []),
-    releaseDates: prefer('releaseDates', []),
+    actors: preferCJK('actors', []).slice(0, 20),
+    genres: preferListCJK('genres'),
+    countries: preferListCJK('countries'),
+    languages: preferListCJK('languages'),
+    durations: preferListCJK('durations'),
+    releaseDates: preferListCJK('releaseDates'),
     aka: union('aka').slice(0, 10),
     poster: prefer('poster'),
-    summary: prefer('summary'),
+    summary: preferCJK('summary'),
     rating: 0,
     ratingCount: 0,
     ratingLabel: '',
@@ -728,7 +760,10 @@ async function search(keyword, opts = {}) {
     seen.add(key);
     merged.push(item);
   }
-  merged.sort((a, b) => similarity(b.title, q) - similarity(a.title, q));
+  // 中文关键词优先返回中文标题的结果（英文结果自然相似度偏低，这里再给中文一点加成）
+  const qIsCJK = hasCJK(q);
+  const scoreOf = (item) => similarity(item.title, q) + (qIsCJK && hasCJK(item.title) ? 0.08 : 0);
+  merged.sort((a, b) => scoreOf(b) - scoreOf(a));
   return { results: merged.slice(0, 20), sources, sourceStatus };
 }
 
