@@ -859,6 +859,67 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { collection: { id: data.id, name: data.name, poster: data.poster, overview: data.overview }, parts });
   }
 
+  /** 一次性把合集里还没入库的影片全部加入片库 */
+  if (p === '/api/movie-collection/import' && req.method === 'POST') {
+    applyDoubanCookie();
+    const body = await readBody(req);
+    const key = tmdbKey();
+    if (!key) return sendJson(res, 400, { error: '合集导入需要 TMDb API Key（设置页填写）' });
+    const movieId = String(body.movieId || '');
+    let collectionId = String(body.collectionId || '');
+    if (!collectionId && movieId) {
+      const m = store.getMovie(movieId);
+      collectionId = (m && m.collection && m.collection.id) || '';
+    }
+    if (!collectionId) return sendJson(res, 400, { error: '没有指定合集' });
+
+    // 取合集（优先用缓存）
+    const cacheKey = `mcoll:v1:${collectionId}`;
+    const cached = store.cache.get(cacheKey);
+    let data = cached && cached.data;
+    if (!data || cached.ts < Date.now() - 7 * 24 * 3600 * 1000) {
+      try {
+        data = await movie.tmdbCollection(collectionId, key);
+        store.cache.set(cacheKey, { ts: Date.now(), data });
+      } catch (err) {
+        return sendJson(res, 502, { error: err.message || '合集抓取失败' });
+      }
+    }
+    const status = store.MOVIE_STATUSES[body.status] ? body.status : 'wish';
+    const owned = new Set(store.listMovies().map((x) => String(x.tmdbId || '')).filter(Boolean));
+    const todo = (data.parts || []).filter((x) => x.tmdbId && !owned.has(String(x.tmdbId)));
+    const added = [];
+    const failed = [];
+    const queue = todo.slice();
+    const worker = async () => {
+      while (queue.length) {
+        const part = queue.shift();
+        try {
+          const rec = await movie.tmdbDetail(part.sourceId, key);
+          let saved = store.addMovie({ ...rec, status });
+          if (saved.posterRemote && !saved.poster) {
+            const local = await store.localizeCover(saved.posterRemote, saved.id);
+            if (local) saved = store.updateMovie(saved.id, { poster: local });
+          }
+          added.push({ id: saved.id, title: saved.title, year: saved.year });
+        } catch (err) {
+          failed.push({ title: part.title, error: err.message || '抓取失败' });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, queue.length) }, worker));
+    return sendJson(res, 200, {
+      ok: true,
+      collection: { id: data.id, name: data.name },
+      total: (data.parts || []).length,
+      already: (data.parts || []).length - todo.length,
+      addedCount: added.length,
+      failedCount: failed.length,
+      added,
+      failed,
+    });
+  }
+
   const movieRelatedMatch = p.match(/^\/api\/movies\/([^/]+)\/related$/);
   if (movieRelatedMatch && req.method === 'GET') {
     applyDoubanCookie();

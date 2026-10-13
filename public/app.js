@@ -2594,6 +2594,39 @@
         } catch (err) {
           toast(`删除失败：${err.message}`, 'err');
         }
+      } else if (act === 'movie-collection-import') {
+        const cid = action.dataset.cid;
+        const missing = Number(action.dataset.missing) || 0;
+        if (!window.confirm(`把这个合集里还没入库的 ${missing} 部影片一次性加入片库？`)) return;
+        const label0 = action.textContent;
+        action.disabled = true;
+        action.textContent = `正在导入 0/${missing}…`;
+        let done = 0;
+        const tick = setInterval(() => {
+          done = Math.min(missing, done + 1);
+          action.textContent = `正在导入 ${done}/${missing}…`;
+        }, 900);
+        try {
+          const res = await api('/api/movie-collection/import', {
+            method: 'POST',
+            body: { collectionId: cid, movieId: d.movie.id, status: state.movieFilters.status || 'wish' },
+          });
+          clearInterval(tick);
+          toast(
+            `合集导入完成：新增 ${res.addedCount} 部${res.already ? `，已有 ${res.already} 部` : ''}${
+              res.failedCount ? `，失败 ${res.failedCount} 部` : ''
+            }`
+          );
+          await refresh();
+          state.movieCollection = null;
+          renderMovieSheet();
+          ensureMovieCollection(true);
+        } catch (err) {
+          clearInterval(tick);
+          toast(`导入失败：${err.message}`, 'err');
+          action.disabled = false;
+          action.textContent = label0;
+        }
       } else if (act === 'movie-collection-refresh') {
         state.movieCollection = null;
         ensureMovieCollection(true);
@@ -3994,6 +4027,15 @@
                 }
                 <div class="btn-row" style="margin-top:8px">
                   <button class="btn ghost sm" data-action="movie-collection-refresh">↻ 刷新合集</button>
+                  ${
+                    parts.filter((x) => !x.owned).length
+                      ? `<button class="btn sm" data-action="movie-collection-import" data-cid="${esc(
+                          m.collection.id
+                        )}" data-missing="${parts.filter((x) => !x.owned).length}">＋ 全部加入（${
+                          parts.filter((x) => !x.owned).length
+                        } 部）</button>`
+                      : '<span class="hint" style="align-self:center;font-size:12px">这个系列的影片都已入库 ✓</span>'
+                  }
                 </div>
               </div>`;
             })()
