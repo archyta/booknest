@@ -758,6 +758,7 @@ function normalizeMovieInput(input = {}, base = {}) {
     })(),
     seasonsCount: Number(input.seasonsCount != null ? input.seasonsCount : base.seasonsCount) || 0,
     episodesCount: Number(input.episodesCount != null ? input.episodesCount : base.episodesCount) || 0,
+    seasonsRefreshedAt: String(input.seasonsRefreshedAt != null ? input.seasonsRefreshedAt : base.seasonsRefreshedAt || ''),
     watchedSeasons: (() => {
       const src = input.watchedSeasons !== undefined ? input.watchedSeasons : base.watchedSeasons;
       if (!Array.isArray(src)) return base.watchedSeasons || [];

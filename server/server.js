@@ -831,6 +831,40 @@ async function handleApi(req, res, url) {
     }
   }
 
+  /** 只刷新剧集的"季"信息（单次 TMDb 请求，不动标题/评分等其它字段） */
+  if (p.match(/^\/api\/movies\/([^/]+)\/refresh-seasons$/) && req.method === 'POST') {
+    const id = decodeId(p.match(/^\/api\/movies\/([^/]+)\/refresh-seasons$/)[1]);
+    const m = store.getMovie(id);
+    if (!m) return sendJson(res, 404, { error: '影片不存在' });
+    if (m.type !== 'tv') return sendJson(res, 200, { movie: m, skipped: true });
+    const key = tmdbKey();
+    if (!key) return sendJson(res, 200, { movie: m, error: '需要 TMDb API Key（设置页填写）' });
+    try {
+      const rec = m.tmdbId
+        ? await movie.tmdbDetail(`tv/${m.tmdbId}`, key)
+        : await movie.tmdbFindByTitle(m.title, m.year, 'tv', key);
+      if (!rec || !(rec.seasons || []).length) {
+        return sendJson(res, 200, { movie: m, error: '没在 TMDb 找到这部剧集的季信息' });
+      }
+      const before = (m.seasons || []).length;
+      const updated = store.updateMovie(id, {
+        seasons: rec.seasons,
+        seasonsCount: rec.seasonsCount,
+        episodesCount: rec.episodesCount,
+        tmdbId: rec.tmdbId || m.tmdbId,
+        seasonsRefreshedAt: nowIso(),
+      });
+      return sendJson(res, 200, {
+        movie: updated,
+        seasonsBefore: before,
+        seasonsAfter: (rec.seasons || []).length,
+        added: Math.max(0, (rec.seasons || []).length - before),
+      });
+    } catch (err) {
+      return sendJson(res, 200, { movie: m, error: err.message || '刷新失败' });
+    }
+  }
+
   /** 某个导演/编剧/演员的全部作品 */
   if (p === '/api/person-works' && req.method === 'GET') {
     const key = tmdbKey();

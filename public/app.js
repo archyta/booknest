@@ -2692,6 +2692,8 @@
           `导入 ${missing} 部影片 · 观看状态`
         );
         return;
+      } else if (act === 'season-refresh') {
+        await refreshSeasons(true);
       } else if (act === 'season-all') {
         const total = (d.movie.seasons || []).length;
         const all = (d.movie.watchedSeasons || []).length >= total;
@@ -4136,6 +4138,7 @@
     if (state.movieDraft.isNew === false) {
       ensureMovieRelated();
       ensureMovieCollection();
+      refreshSeasons(false); // 进详情自动刷一次（1 小时内不重复）
     }
   }
 
@@ -4303,7 +4306,8 @@
               const epsWatched = seasons.filter((x) => watched.has(x.number)).reduce((a, x) => a + (x.episodes || 0), 0);
               const allWatched = seasons.length && watched.size >= seasons.length;
               return `<div class="field"><label>季与进度
-                <span class="hint" style="font-weight:400">（看过 ${watched.size}/${seasons.length} 季 · ${epsWatched}/${epsTotal} 集）</span></label>
+                <span class="hint" style="font-weight:400">（看过 ${watched.size}/${seasons.length} 季 · ${epsWatched}/${epsTotal} 集）</span>
+                <button class="btn sm ghost" data-action="season-refresh" style="margin-left:auto;font-size:11px;padding:2px 8px">↻ 刷新季<span id="seasonRefreshHint" style="margin-left:4px;color:var(--text-mute)"></span></button></label>
                 <div class="season-grid">
                   ${seasons
                     .map(
@@ -4601,6 +4605,42 @@
       .filter((x) => x.score >= 2)
       .sort((a, b) => b.score - a.score)
       .slice(0, 10);
+  }
+
+  /**
+   * 刷新剧集的季信息。
+   * 进详情时自动刷一次（同一条记录 1 小时内不重复刷，避免来回进出时反复请求），
+   * 也可以点「↻ 刷新季」强制刷。
+   */
+  async function refreshSeasons(force) {
+    const d = state.movieDraft;
+    if (!d || d.isNew) return;
+    const m = d.movie;
+    if (m.type !== 'tv') return;
+    const last = m.seasonsRefreshedAt ? Date.parse(m.seasonsRefreshedAt) : 0;
+    if (!force && last && Date.now() - last < 60 * 60 * 1000) return; // 1 小时内已刷过
+    const hint = $('#seasonRefreshHint');
+    if (hint) hint.textContent = '刷新中…';
+    try {
+      const res = await api(`/api/movies/${encodeURIComponent(m.id)}/refresh-seasons`, { method: 'POST' });
+      if (res.movie && state.movieDraft && state.movieDraft.movie.id === m.id) {
+        state.movieDraft.movie = res.movie;
+        const idx = state.movies.findIndex((x) => x.id === m.id);
+        if (idx >= 0) state.movies[idx] = res.movie;
+      }
+      if (res.error) {
+        if (force) toast(res.error, 'err');
+      } else if (res.added > 0) {
+        toast(`季信息已更新：新增 ${res.added} 季（共 ${res.seasonsAfter} 季）`);
+      } else if (force) {
+        toast(`季信息已是最新（共 ${res.seasonsAfter || (res.movie.seasons || []).length} 季）`);
+      }
+      if (state.movieDraft && state.movieDraft.movie.id === m.id) renderMovieSheet();
+    } catch (err) {
+      if (force) toast(`刷新失败：${err.message}`, 'err');
+      const h = $('#seasonRefreshHint');
+      if (h) h.textContent = '';
+    }
   }
 
   /** 把某个影片归入手动系列（name 为空则先问名字） */
