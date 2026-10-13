@@ -4488,7 +4488,13 @@
                       .filter((x) => !x.ok && x.error && x.error !== '没有匹配结果')
                       .map((x) => `${x.label}：${x.error}`)
                       .join('；')
-                  )}</div>`
+                  )}${
+                    (s.sourceStatus || []).some((x) => x.key === 'douban' && !x.ok) && !state.settings.doubanCookieSet
+                      ? '<br>豆瓣的<b>搜索</b>接口对机房/高频 IP 会限流（详情与推荐接口不受影响）。' +
+                        '可在「设置 → 豆瓣 Cookie」填入登录态恢复；' +
+                        '或直接把豆瓣链接 / 条目 id（如 1292052）粘进搜索框，走详情接口直接抓取。'
+                      : ''
+                  }</div>`
                 : ''
             }`
           : ''
@@ -4524,9 +4530,32 @@
       </div>`;
   }
 
+  /** 输入的是豆瓣链接或纯数字 id 时，直接按条目抓取（跳过被限流的搜索接口） */
+  function parseDoubanRef(q) {
+    const s = String(q || '').trim();
+    let m = s.match(/douban\.com\/subject\/(\d+)/i);
+    if (m) return m[1];
+    m = s.match(/^https?:\/\/m\.douban\.com\/movie\/subject\/(\d+)/i);
+    if (m) return m[1];
+    if (/^\d{6,10}$/.test(s)) return s;
+    return '';
+  }
+
   async function runMovieSearch(keyword) {
     const q = (keyword != null ? keyword : (($('#movieSearchInput') || {}).value || '')).trim();
     if (!q) return;
+    // 直接给了豆瓣条目 id / 链接 → 走 detail 接口（不受搜索限流影响）
+    const doubanId = parseDoubanRef(q);
+    if (doubanId) {
+      state.movieSearch.q = q;
+      state.movieSearch.busy = true;
+      state.movieSearch.error = '';
+      state.movieSearch.results = [];
+      state.movieSearch.sourceStatus = [{ key: 'douban', label: '豆瓣条目', ok: true, count: 1, error: '' }];
+      renderMovieSearch();
+      await pickMovieResult('douban', doubanId, '', '');
+      return;
+    }
     state.movieSearch.q = q;
     state.movieSearch.busy = true;
     state.movieSearch.error = '';
