@@ -2348,13 +2348,24 @@
       }
     });
 
-    $('#kindSwitch').addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-mkind]');
-      if (!btn) return;
-      state.movieFilters.kind = btn.dataset.mkind;
+    $('#kindBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const menu = $('#kindMenu');
+      if (menu.classList.contains('hidden')) openKindMenu();
+      else closeKindMenu();
+    });
+    $('#kindMenu').addEventListener('click', (e) => {
+      const item = e.target.closest('[data-mkind]');
+      if (!item) return;
+      e.stopPropagation();
+      state.movieFilters.kind = item.dataset.mkind;
+      closeKindMenu();
       renderKindSwitch();
       renderShelf();
     });
+    document.addEventListener('click', () => closeKindMenu());
+    window.addEventListener('resize', () => closeKindMenu());
+    document.addEventListener('scroll', () => closeKindMenu(), true);
 
     $('#statusChips').addEventListener('click', (e) => {
       const mchip = e.target.closest('[data-mstatus]');
@@ -3633,30 +3644,55 @@
     </button>`;
   }
 
-  /** 片库：全部 / 电影 / 剧集 分段筛选（含数量） */
+  /** 片库：标题栏里的 全部 / 电影 / 剧集 切换（小图标 + 文字 + 下拉小菜单） */
   function renderKindSwitch() {
-    const box = $('#kindSwitch');
-    if (!box) return;
+    const btn = $('#kindBtn');
+    const menu = $('#kindMenu');
+    if (!btn || !menu) return;
     if (state.mode !== 'movie') {
-      box.classList.add('hidden');
-      box.innerHTML = '';
+      btn.classList.add('hidden');
+      menu.classList.add('hidden');
       return;
     }
-    box.classList.remove('hidden');
+    btn.classList.remove('hidden');
     const movies = state.movies.filter((m) => m.type !== 'tv').length;
     const tvs = state.movies.filter((m) => m.type === 'tv').length;
     const cur = state.movieFilters.kind || '';
     const opts = [
-      ['', '全部', state.movies.length],
-      ['movie', '电影', movies],
-      ['tv', '剧集', tvs],
+      ['', '🎞', '全部', state.movies.length],
+      ['movie', '🎬', '电影', movies],
+      ['tv', '📺', '剧集', tvs],
     ];
-    box.innerHTML = opts
+    const hit = opts.find((o) => o[0] === cur) || opts[0];
+    $('#kindIcon').textContent = hit[1];
+    $('#kindLabel').textContent = hit[2];
+    btn.classList.toggle('on', cur !== '');
+    menu.innerHTML = opts
       .map(
-        ([key, label, n]) =>
-          `<button class="${cur === key ? 'on' : ''}" data-mkind="${key}">${esc(label)}<span class="n">${n}</span></button>`
+        ([key, icon, label, n]) =>
+          `<button class="${cur === key ? 'on' : ''}" data-mkind="${key}"><span class="mi">${icon}</span>${esc(
+            label
+          )}<span class="n">${n}</span></button>`
       )
       .join('');
+  }
+
+  /** 小菜单跟随按钮定位 */
+  function openKindMenu() {
+    const btn = $('#kindBtn');
+    const menu = $('#kindMenu');
+    if (!btn || !menu) return;
+    const r = btn.getBoundingClientRect();
+    menu.classList.remove('hidden');
+    const mw = menu.offsetWidth || 140;
+    const left = Math.max(8, Math.min(r.right - mw, window.innerWidth - mw - 8));
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(r.bottom + 6)}px`;
+  }
+
+  function closeKindMenu() {
+    const menu = $('#kindMenu');
+    if (menu) menu.classList.add('hidden');
   }
 
   function renderMovieShelf() {
