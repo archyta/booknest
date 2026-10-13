@@ -735,6 +735,11 @@ function normalizeMovieInput(input = {}, base = {}) {
     tmdbId: pickStr('tmdbId'),
     sourceUrls: input.sourceUrls && typeof input.sourceUrls === 'object' ? input.sourceUrls : base.sourceUrls || {},
     writers: pickArr('writers'),
+    collection: (() => {
+      const c = input.collection !== undefined ? input.collection : base.collection;
+      if (!c || !c.id) return base.collection || null;
+      return { id: String(c.id), name: String(c.name || '').trim(), poster: String(c.poster || '') };
+    })(),
     mergedFrom: input.mergedFrom != null ? coerceList(input.mergedFrom) : base.mergedFrom || [],
     ratings: (() => {
       const src = input.ratings != null ? input.ratings : base.ratings;

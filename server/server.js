@@ -831,6 +831,34 @@ async function handleApi(req, res, url) {
     }
   }
 
+  const movieCollectionMatch = p.match(/^\/api\/movies\/([^/]+)\/collection$/);
+  if (movieCollectionMatch && req.method === 'GET') {
+    applyDoubanCookie();
+    const m = store.getMovie(decodeId(movieCollectionMatch[1]));
+    if (!m) return sendJson(res, 404, { error: '影片不存在' });
+    const cid = (m.collection && m.collection.id) || q.get('id') || '';
+    const key = tmdbKey();
+    if (!cid) return sendJson(res, 200, { collection: null, parts: [], error: '这部影片不属于任何合集' });
+    if (!key) return sendJson(res, 200, { collection: m.collection, parts: [], error: '合集需要 TMDb API Key（设置页填写）' });
+    const cacheKey = `mcoll:v1:${cid}`;
+    const cached = store.cache.get(cacheKey);
+    let data;
+    if (cached && Date.now() - cached.ts < 7 * 24 * 3600 * 1000 && q.get('force') !== '1') {
+      data = cached.data;
+    } else {
+      try {
+        data = await movie.tmdbCollection(cid, key);
+        store.cache.set(cacheKey, { ts: Date.now(), data });
+      } catch (err) {
+        return sendJson(res, 200, { collection: m.collection, parts: [], error: err.message || '合集抓取失败' });
+      }
+    }
+    // 标注哪些已经在片库里
+    const owned = new Set(store.listMovies().map((x) => String(x.tmdbId || '')).filter(Boolean));
+    const parts = (data.parts || []).map((x) => ({ ...x, owned: owned.has(String(x.tmdbId)) }));
+    return sendJson(res, 200, { collection: { id: data.id, name: data.name, poster: data.poster, overview: data.overview }, parts });
+  }
+
   const movieRelatedMatch = p.match(/^\/api\/movies\/([^/]+)\/related$/);
   if (movieRelatedMatch && req.method === 'GET') {
     applyDoubanCookie();

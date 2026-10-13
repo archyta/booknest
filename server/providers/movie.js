@@ -413,6 +413,14 @@ function fromTmdbDetail(data, mediaType) {
     durations: data.runtime ? [`${data.runtime}分钟`] : isTv && data.episode_run_time && data.episode_run_time[0] ? [`${data.episode_run_time[0]}分钟`] : [],
     releaseDates: [data.release_date || data.first_air_date || ''].filter(Boolean),
     aka: unique([...(zhAlt || []), ...((data.alternative_titles && data.alternative_titles.titles) || []).map((t) => clean(t.title))]).slice(0, 10),
+    // TMDb 原生合集（007系列 / 漫威 / 哈利波特 …）
+    collection: data.belongs_to_collection
+      ? {
+          id: String(data.belongs_to_collection.id),
+          name: clean(data.belongs_to_collection.name),
+          poster: data.belongs_to_collection.poster_path ? TMDB_IMG + data.belongs_to_collection.poster_path : '',
+        }
+      : null,
     poster: data.poster_path ? TMDB_IMG_ORIG + data.poster_path : '',
     summary: cleanMultiline(data.overview || ''),
     rating: data.vote_average ? Math.round(data.vote_average * 10) / 10 : 0,
@@ -537,6 +545,7 @@ function mergeRecords(records) {
     durations: preferListCJK('durations'),
     releaseDates: preferListCJK('releaseDates'),
     aka: union('aka').slice(0, 10),
+    collection: (list.find((r) => r.collection && r.collection.id) || {}).collection || null,
     poster: prefer('poster'),
     summary: preferCJK('summary'),
     rating: 0,
@@ -659,6 +668,34 @@ function withTimeout(promise, ms) {
     Promise.resolve(promise).catch(() => null),
     new Promise((resolve) => setTimeout(() => resolve(null), ms)),
   ]);
+}
+
+/** 取 TMDb 合集（系列）的全部影片，用于详情页"合集"区块与一键补齐 */
+async function tmdbCollection(collectionId, apiKey) {
+  const data = await tmdbGet(`/collection/${encodeURIComponent(collectionId)}`, apiKey, {});
+  const parts = (data.parts || [])
+    .filter((p) => p && p.id)
+    .map((p) => ({
+      source: 'tmdb',
+      sourceLabel: 'TMDb',
+      sourceId: `movie/${p.id}`,
+      tmdbId: String(p.id),
+      title: clean(p.title || p.name || p.original_title || ''),
+      originalTitle: clean(p.original_title || ''),
+      year: String(p.release_date || '').slice(0, 4),
+      poster: p.poster_path ? TMDB_IMG + p.poster_path : '',
+      rating: p.vote_average ? Math.round(p.vote_average * 10) / 10 : 0,
+      ratingCount: p.vote_count || 0,
+      type: 'movie',
+    }))
+    .sort((a, b) => String(a.year || '9999').localeCompare(String(b.year || '9999')));
+  return {
+    id: String(data.id || collectionId),
+    name: clean(data.name || ''),
+    poster: data.poster_path ? TMDB_IMG + data.poster_path : '',
+    overview: cleanMultiline(data.overview || ''),
+    parts,
+  };
 }
 
 /**
@@ -929,6 +966,7 @@ async function lookup(query) {
 module.exports = {
   search,
   lookup,
+  tmdbCollection,
   checkSources,
   setDoubanCookie,
   searchDoubanRexxar,

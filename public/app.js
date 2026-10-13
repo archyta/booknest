@@ -46,6 +46,7 @@
     movieRelated: null,
     movieSearch: { q: '', results: [], sources: [], sourceStatus: [], busy: false, error: '' },
     movieSources: [],
+    movieCollection: null,
     movieListPick: null,
     movieCurrentListId: '',
     creatingMovieList: false,
@@ -2258,7 +2259,10 @@
         else if (sheetId === 'sheetAuthor') state.author = null;
         else if (sheetId === 'sheetCover') state.cover = null;
         else if (sheetId === 'sheetListPick') state.listPick = null;
-        else if (sheetId === 'sheetMovie') state.movieDraft = null;
+        else if (sheetId === 'sheetMovie') {
+          state.movieDraft = null;
+          state.movieCollection = null;
+        }
         else if (sheetId === 'sheetMovieSearch')
           state.movieSearch = { q: '', results: [], sources: [], sourceStatus: [], busy: false, error: '' };
         else if (sheetId === 'sheetMovieListPick') state.movieListPick = null;
@@ -2348,24 +2352,13 @@
       }
     });
 
-    $('#kindBtn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      const menu = $('#kindMenu');
-      if (menu.classList.contains('hidden')) openKindMenu();
-      else closeKindMenu();
-    });
-    $('#kindMenu').addEventListener('click', (e) => {
-      const item = e.target.closest('[data-mkind]');
-      if (!item) return;
-      e.stopPropagation();
-      state.movieFilters.kind = item.dataset.mkind;
-      closeKindMenu();
+    $('#kindSeg').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-mkind]');
+      if (!btn) return;
+      state.movieFilters.kind = btn.dataset.mkind;
       renderKindSwitch();
       renderShelf();
     });
-    document.addEventListener('click', () => closeKindMenu());
-    window.addEventListener('resize', () => closeKindMenu());
-    document.addEventListener('scroll', () => closeKindMenu(), true);
 
     $('#statusChips').addEventListener('click', (e) => {
       const mchip = e.target.closest('[data-mstatus]');
@@ -2601,6 +2594,9 @@
         } catch (err) {
           toast(`删除失败：${err.message}`, 'err');
         }
+      } else if (act === 'movie-collection-refresh') {
+        state.movieCollection = null;
+        ensureMovieCollection(true);
       } else if (act === 'movie-related-refresh') {
         state.movieRelated = null;
         ensureMovieRelated(true);
@@ -3620,6 +3616,7 @@
       </div>
       <div class="t">${esc(m.title)}</div>
       <div class="s">${esc([m.year, (m.directors || [])[0]].filter(Boolean).join(' · ') || '—')}</div>
+      ${m.collection && m.collection.name ? `<div class="coll">${esc(m.collection.name)}</div>` : ''}
     </button>`;
   }
 
@@ -3644,55 +3641,30 @@
     </button>`;
   }
 
-  /** 片库：标题栏里的 全部 / 电影 / 剧集 切换（小图标 + 文字 + 下拉小菜单） */
+  /** 片库：标题栏里平铺的 全部 / 电影 / 剧集 分段控件（带数量） */
   function renderKindSwitch() {
-    const btn = $('#kindBtn');
-    const menu = $('#kindMenu');
-    if (!btn || !menu) return;
+    const box = $('#kindSeg');
+    if (!box) return;
     if (state.mode !== 'movie') {
-      btn.classList.add('hidden');
-      menu.classList.add('hidden');
+      box.classList.add('hidden');
+      box.innerHTML = '';
       return;
     }
-    btn.classList.remove('hidden');
+    box.classList.remove('hidden');
     const movies = state.movies.filter((m) => m.type !== 'tv').length;
     const tvs = state.movies.filter((m) => m.type === 'tv').length;
     const cur = state.movieFilters.kind || '';
     const opts = [
-      ['', '🎞', '全部', state.movies.length],
-      ['movie', '🎬', '电影', movies],
-      ['tv', '📺', '剧集', tvs],
+      ['', '全部', state.movies.length],
+      ['movie', '电影', movies],
+      ['tv', '剧集', tvs],
     ];
-    const hit = opts.find((o) => o[0] === cur) || opts[0];
-    $('#kindIcon').textContent = hit[1];
-    $('#kindLabel').textContent = hit[2];
-    btn.classList.toggle('on', cur !== '');
-    menu.innerHTML = opts
+    box.innerHTML = opts
       .map(
-        ([key, icon, label, n]) =>
-          `<button class="${cur === key ? 'on' : ''}" data-mkind="${key}"><span class="mi">${icon}</span>${esc(
-            label
-          )}<span class="n">${n}</span></button>`
+        ([key, label, n]) =>
+          `<button class="${cur === key ? 'on' : ''}" data-mkind="${key}">${esc(label)}<span class="n">${n}</span></button>`
       )
       .join('');
-  }
-
-  /** 小菜单跟随按钮定位 */
-  function openKindMenu() {
-    const btn = $('#kindBtn');
-    const menu = $('#kindMenu');
-    if (!btn || !menu) return;
-    const r = btn.getBoundingClientRect();
-    menu.classList.remove('hidden');
-    const mw = menu.offsetWidth || 140;
-    const left = Math.max(8, Math.min(r.right - mw, window.innerWidth - mw - 8));
-    menu.style.left = `${Math.round(left)}px`;
-    menu.style.top = `${Math.round(r.bottom + 6)}px`;
-  }
-
-  function closeKindMenu() {
-    const menu = $('#kindMenu');
-    if (menu) menu.classList.add('hidden');
   }
 
   function renderMovieShelf() {
@@ -3781,7 +3753,10 @@
     if (opts.saved) state.movieDraft.isNew = false;
     renderMovieSheet();
     openSheet('#sheetMovie');
-    if (state.movieDraft.isNew === false) ensureMovieRelated();
+    if (state.movieDraft.isNew === false) {
+      ensureMovieRelated();
+      ensureMovieCollection();
+    }
   }
 
   /** 三方链接：有哪个 id 就给哪个链接 */
@@ -3987,6 +3962,45 @@
       }
 
       ${
+        !d.isNew && m.collection && m.collection.id
+          ? (() => {
+              const c = state.movieCollection && state.movieCollection.movieId === m.id ? state.movieCollection : null;
+              const parts = (c && c.parts) || [];
+              const ownedN = parts.filter((x) => x.owned).length;
+              return `<div class="field"><label>合集：${esc(m.collection.name || '系列影片')} ${
+                parts.length ? `<span class="hint" style="font-weight:400">（共 ${parts.length} 部 · 片库已有 ${ownedN} 部）</span>` : ''
+              }</label>
+                ${
+                  c === null || c.loading
+                    ? '<div class="center"><span class="spinner"></span> 正在获取合集…</div>'
+                    : c.error
+                    ? `<div class="hint">${esc(c.error)}</div>`
+                    : parts.length
+                    ? `<div class="sim-row">${parts
+                        .map((p) => {
+                          const inLib = p.owned || state.movies.some((x) => String(x.tmdbId || '') === String(p.tmdbId));
+                          const here = inLib && String(m.tmdbId || '') === String(p.tmdbId);
+                          const inner = `<div class="cover">${
+                            p.poster ? `<img loading="lazy" src="${esc(p.poster)}" alt="">` : '🎬'
+                          }${here ? '<span class="agree">当前</span>' : inLib ? '<span class="agree" style="background:rgba(22,163,74,.92)">已有</span>' : ''}</div>
+                          <div class="t">${esc(p.title)}</div>
+                          <div class="s">${esc([p.year, p.rating ? `★${p.rating}` : ''].filter(Boolean).join(' · '))}</div>`;
+                          return inLib
+                            ? `<button class="sim-card" data-movie="${esc((state.movies.find((x) => String(x.tmdbId || '') === String(p.tmdbId)) || {}).id || '')}">${inner}</button>`
+                            : `<button class="sim-card" data-movie-add="tmdb|${esc(p.sourceId)}|${esc(p.title)}|${esc(p.year || '')}">${inner}</button>`;
+                        })
+                        .join('')}</div>`
+                    : '<div class="hint">这个合集暂时没有可展示的影片</div>'
+                }
+                <div class="btn-row" style="margin-top:8px">
+                  <button class="btn ghost sm" data-action="movie-collection-refresh">↻ 刷新合集</button>
+                </div>
+              </div>`;
+            })()
+          : ''
+      }
+
+      ${
         !d.isNew
           ? `<div class="field"><label>相似与推荐 ${
               related && related.candidates && related.candidates.length ? `<span class="hint" style="font-weight:400">（${
@@ -4083,6 +4097,32 @@
       .filter((x) => x.score >= 2)
       .sort((a, b) => b.score - a.score)
       .slice(0, 10);
+  }
+
+  /** 影片合集（007系列 / 漫威 / 哈利波特…）：TMDb belongs_to_collection */
+  async function ensureMovieCollection(force) {
+    const d = state.movieDraft;
+    if (!d || d.isNew) return;
+    const m = d.movie;
+    if (!m.collection || !m.collection.id) {
+      state.movieCollection = { movieId: m.id, parts: [], none: true };
+      return;
+    }
+    if (!force && state.movieCollection && state.movieCollection.movieId === m.id) return;
+    state.movieCollection = { movieId: m.id, collection: m.collection, parts: [], loading: true };
+    renderMovieSheet();
+    try {
+      const res = await api(`/api/movies/${encodeURIComponent(m.id)}/collection${force ? '?force=1' : ''}`);
+      state.movieCollection = {
+        movieId: m.id,
+        collection: res.collection || m.collection,
+        parts: res.parts || [],
+        error: res.error || '',
+      };
+    } catch (err) {
+      state.movieCollection = { movieId: m.id, collection: m.collection, parts: [], error: err.message };
+    }
+    if (state.movieDraft && state.movieDraft.movie.id === m.id) renderMovieSheet();
   }
 
   async function ensureMovieRelated(force) {

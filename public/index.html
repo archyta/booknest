@@ -20,9 +20,7 @@
     <div class="topbar-row">
       <h1 class="brand">📚 书巢 <small id="shelfCount"></small></h1>
       <div class="spacer"></div>
-      <button class="kind-btn hidden" id="kindBtn" aria-haspopup="true" title="只看电影 / 只看剧集">
-        <span class="ki" id="kindIcon">🎞</span><span id="kindLabel">全部</span><span class="caret">▾</span>
-      </button>
+      <div class="kind-seg hidden" id="kindSeg" title="只看电影 / 只看剧集"></div>
       <button class="icon-btn" id="btnViewMode" title="切换网格 / 列表">▦</button>
     </div>
     <div class="searchbox">
@@ -217,8 +215,6 @@
   </div>
   <div class="sheet-body" id="settingsBody"></div>
 </section>
-
-<div class="mini-menu hidden" id="kindMenu"></div>
 
 <div id="lightbox" class="lightbox">
   <img id="lightboxImg" alt="封面大图">

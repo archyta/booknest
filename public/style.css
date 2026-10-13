@@ -618,27 +618,24 @@ a { color: var(--brand); }
   background: rgba(14, 165, 233, 0.92); color: #fff; font-weight: 600;
 }
 
-/* 片库：标题栏里的 电影 / 剧集 切换（小图标 + 文字 + 下拉小菜单） */
-.kind-btn {
-  display: inline-flex; align-items: center; gap: 3px; height: 30px; padding: 0 9px; margin-right: 6px;
-  border-radius: 999px; background: var(--bg-soft); color: var(--text-dim);
-  font-size: 12.5px; font-weight: 600; border: 1px solid var(--line); white-space: nowrap;
-}
-.kind-btn .ki { font-size: 13px; }
-.kind-btn .caret { font-size: 9px; opacity: 0.6; margin-left: 1px; }
-.kind-btn:active { opacity: 0.75; }
-.kind-btn.on { background: color-mix(in srgb, var(--brand) 16%, transparent); color: var(--brand); border-color: color-mix(in srgb, var(--brand) 45%, transparent); }
 
-.mini-menu {
-  position: fixed; z-index: 120; min-width: 132px; padding: 5px;
-  background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+/* 片库：标题栏里平铺的 全部 / 电影 / 剧集 分段控件 */
+.kind-seg {
+  display: inline-flex; align-items: center; gap: 2px; padding: 2px; margin-right: 6px;
+  background: var(--bg-soft); border: 1px solid var(--line); border-radius: 999px;
 }
-.mini-menu button {
-  display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border-radius: 8px;
-  font-size: 13px; color: var(--text-dim); text-align: left;
+.kind-seg button {
+  display: inline-flex; align-items: center; gap: 3px; height: 26px; padding: 0 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; color: var(--text-mute); white-space: nowrap;
 }
-.mini-menu button .mi { font-size: 13px; }
-.mini-menu button .n { margin-left: auto; font-size: 11.5px; color: var(--text-mute); }
-.mini-menu button.on { background: color-mix(in srgb, var(--brand) 16%, transparent); color: var(--brand); font-weight: 600; }
-.mini-menu button:active { background: var(--bg-soft); }
+.kind-seg button .n { font-size: 10.5px; font-weight: 400; opacity: 0.7; }
+.kind-seg button.on { background: var(--brand); color: #fff; }
+.kind-seg button.on .n { opacity: 0.85; }
+.kind-seg button:active { opacity: 0.8; }
+
+/* 影片合集（系列）标签 */
+.movie-card .coll {
+  display: inline-block; margin-top: 3px; font-size: 10.5px; padding: 0 6px; border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 16%, transparent); color: var(--brand);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
