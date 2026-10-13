@@ -159,7 +159,7 @@ a { color: var(--brand); }
 }
 #tabbar button {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  font-size: 10.5px; color: var(--text-mute);
+  color: var(--text-mute); font-size: 10.5px; padding: 6px 0; min-width: 0;
 }
 #tabbar button svg { width: 21px; height: 21px; fill: currentColor; }
 #tabbar button.active { color: var(--brand); }

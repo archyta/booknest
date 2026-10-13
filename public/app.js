@@ -2145,6 +2145,12 @@
         </div>
       </div>
       <div class="section">
+        <div class="section-head"><h3>分类与标签</h3><button class="btn sm ghost" data-action="open-manage">打开管理</button></div>
+        <div class="hint" style="font-size:11.5px;color:var(--text-mute)">
+          增删改书籍分类与标签（名称 + 颜色），也能一键为未分类的书套用自动分类。
+        </div>
+      </div>
+      <div class="section">
         <div class="section-head"><h3>影片数据源</h3><button class="btn sm ghost" data-action="check-movie-providers">重新检测</button></div>
         <div class="src-list">
           ${
@@ -2262,15 +2268,31 @@
       const btn = e.target.closest('button[data-tab]');
       if (!btn) return;
       const tab = btn.dataset.tab;
-      $$('#tabbar button').forEach((b) => b.classList.toggle('active', b === btn));
-      if (tab === 'shelf') {
+
+      // 「书 / 影」是一级菜单：切模式并回到列表页
+      if (tab === 'books' || tab === 'movies') {
+        const mode = tab === 'books' ? 'book' : 'movie';
         window.BookScanner.stop(false);
         closeAllSheets();
+        state.draft = null;
+        state.listPick = null;
+        state.movieDraft = null;
+        state.movieCurrentListId = '';
+        if (mode !== state.mode) {
+          state.mode = mode;
+          localStorage.setItem('bn.mode', mode);
+        }
+        setActiveTab(tab);
+        renderAll();
+        renderLists();
+        renderStats();
         return;
       }
+
+      $$('#tabbar button').forEach((b) => b.classList.toggle('active', b === btn));
+      if (tab !== 'add') state.draft = null;
       closeAllSheets();
-      if (tab !== 'shelf') state.draft = null;
-      if (tab === 'scan') {
+      if (tab === 'add') {
         if (state.mode === 'movie') {
           openMovieSearch();
           return;
@@ -2279,11 +2301,9 @@
         renderSession();
         if (window.BookScanner.isRunning()) window.BookScanner.resume();
         else startCamera();
-      } else if (tab === 'manage') {
-        renderManage();
-        openSheet('#sheetManage');
       } else if (tab === 'lists') {
         state.creatingList = false;
+        state.creatingMovieList = false;
         renderLists();
         openSheet('#sheetLists');
       } else if (tab === 'stats') {
@@ -2294,6 +2314,11 @@
         openSheet('#sheetSettings');
       }
     });
+
+    /** 高亮一级菜单（书 / 影 由当前模式决定） */
+    function setActiveTab(tab) {
+      $$('#tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+    }
 
     // 书架交互
     $('#view').addEventListener('click', (e) => {
@@ -2310,7 +2335,7 @@
       const action = e.target.closest('[data-action]');
       if (!action) return;
       if (action.dataset.action === 'goto-scan') {
-        $('#tabbar button[data-tab="scan"]').click();
+        $('#tabbar button[data-tab="add"]').click();
       } else if (action.dataset.action === 'clear-filters') {
         state.filters = { status: '', category: '', tag: '', q: '', sort: 'added-desc', tagIds: [] };
         renderAll();
@@ -2320,22 +2345,6 @@
       } else if (action.dataset.action === 'open-movie-search') {
         openMovieSearch();
       }
-    });
-
-    // 书 / 影 切换
-    $('#modeSwitch').addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-mode]');
-      if (!btn) return;
-      const mode = btn.dataset.mode;
-      if (mode === state.mode) return;
-      state.mode = mode;
-      localStorage.setItem('bn.mode', mode);
-      $$('#modeSwitch button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
-      state.movieCurrentListId = '';
-      renderAll();
-      renderLists();
-      renderStats();
-      toast(mode === 'movie' ? '已切到影片' : '已切到书籍');
     });
 
     $('#statusChips').addEventListener('click', (e) => {
@@ -3350,7 +3359,10 @@
       if (!el) return;
       const action = el.dataset.action;
       try {
-        if (action === 'check-movie-providers') {
+        if (action === 'open-manage') {
+          renderManage();
+          openSheet('#sheetManage');
+        } else if (action === 'check-movie-providers') {
           el.textContent = '检测中…';
           try {
             const res = await api('/api/movie-providers/check', { method: 'POST' });
@@ -3659,10 +3671,14 @@
   }
 
   function renderMovieTabLabel() {
-    const btn = $('#tabbar button[data-tab="scan"]');
-    if (btn) btn.innerHTML = state.mode === 'movie' ? '<span class="ico">＋</span>加片' : '<span class="ico">▣</span>扫码';
-    const listBtn = $('#tabbar button[data-tab="lists"]');
-    if (listBtn) listBtn.innerHTML = state.mode === 'movie' ? '<span class="ico">🎞</span>片单' : '<span class="ico">📚</span>书单';
+    const addBtn = $('#tabbar button[data-tab="add"] .lbl');
+    if (addBtn) addBtn.textContent = state.mode === 'movie' ? '加片' : '扫码';
+    const listBtn = $('#tabbar button[data-tab="lists"] .lbl');
+    if (listBtn) listBtn.textContent = state.mode === 'movie' ? '片单' : '书单';
+    const booksBtn = $('#tabbar button[data-tab="books"] .lbl');
+    const moviesBtn = $('#tabbar button[data-tab="movies"] .lbl');
+    if (booksBtn) booksBtn.textContent = '书';
+    if (moviesBtn) moviesBtn.textContent = '影';
   }
 
   function moviePills(field, options, current) {
@@ -4517,7 +4533,7 @@
       if (state.books.some((b) => b.id === id)) openBookDetail(id);
       return;
     }
-    const tab = ['scan', 'manage', 'stats', 'settings', 'lists'].indexOf(h) >= 0 ? h : '';
+    const tab = ['books', 'movies', 'add', 'stats', 'settings', 'lists'].indexOf(h) >= 0 ? h : '';
     if (!tab) return;
     const btn = $(`#tabbar button[data-tab="${tab}"]`);
     if (btn) btn.click();
@@ -4526,6 +4542,10 @@
   async function main() {
     $('#btnViewMode').textContent = state.viewMode === 'grid' ? '▦' : state.viewMode === 'list' ? '☰' : '⊞';
     bindEvents();
+    // 记住上次停在哪一侧：书 / 影 一级菜单高亮
+    $$('#tabbar button').forEach((b) =>
+      b.classList.toggle('active', b.dataset.tab === (state.mode === 'movie' ? 'movies' : 'books'))
+    );
     try {
       await bootstrap();
     } catch (err) {
