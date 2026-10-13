@@ -1772,6 +1772,45 @@
     if (!lp) return;
     const l = listById(lp.listId);
     if (!l) return;
+    const sortOptions = (() => {
+      const out = [];
+      for (const k of Object.keys(BOOK_SORTS)) {
+        out.push([k, BOOK_SORTS[k]]);
+        if (k === 'added-asc') out.push(['members-first', '已在书单优先']);
+      }
+      const cur = lp.sort || 'added-desc';
+      return out
+        .map(([k, label]) => `<option value="${esc(k)}" ${cur === k ? 'selected' : ''}>${esc(label)}</option>`)
+        .join('');
+    })();
+
+    $('#listPickTitle').textContent = `${l.name} · 选择书籍`;
+    $('#listPickBody').innerHTML = `
+      <div class="field-row" style="margin-bottom:10px;align-items:center">
+        <input id="listPickSearch" type="search" placeholder="搜索书架里的书" value="${esc(lp.query)}"
+          style="flex:1;min-width:0;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--bg-elev);padding:0 10px;outline:none">
+        <select id="listPickSort" title="排序方式"
+          style="flex:0 0 138px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--bg-elev);padding:0 8px;font-size:13px;color:var(--text-dim)">${sortOptions}</select>
+      </div>
+      <div class="hint" style="font-size:12px;color:var(--text-mute);margin-bottom:8px">
+        已选 <b id="listPickCount">${lp.selected.size}</b> 本；取消勾选即从书单移出
+      </div>
+      <div id="listPickRows" style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:12px"></div>
+      <div class="sticky-bar">
+        <button class="btn ghost" data-act="pick-all">全选</button>
+        <button class="btn ghost" data-act="pick-none">清空</button>
+        <button class="btn" data-act="pick-save">完成</button>
+      </div>`;
+    renderListPickRows();
+  }
+
+  /** 只重画书单挑片的列表（保住输入框，避免中文输入法组字被打断） */
+  function renderListPickRows() {
+    const lp = state.listPick;
+    const wrap = $('#listPickRows');
+    if (!lp || !wrap) return;
+    const l = listById(lp.listId);
+    if (!l) return;
     const q = lp.query.trim().toLowerCase();
     const inList = new Set((l.items || []).map((i) => i.bookId));
     const sortKey = lp.sort || 'added-desc';
@@ -1795,61 +1834,33 @@
       books = sortBooks(books, sortKey);
     }
     const showDate = sortKey === 'added-desc' || sortKey === 'added-asc';
-    const rows = books
-      .map((b) => {
-        const cover = coverSrc(b);
-        const search = [b.title, (b.authors || []).join(' '), b.publisher, b.isbn13, b.autoCategoryName]
-          .join(' ')
-          .toLowerCase();
-        const sub = [
-          (b.authors || []).join(' / ') || '—',
-          showDate && b.addedAt ? `${String(b.addedAt).slice(0, 10)} 加入` : '',
-          inList.has(b.id) ? '已在书单' : '',
-        ]
-          .filter(Boolean)
-          .join(' · ');
-        return `<label class="pick-item" data-search="${esc(search)}">
-          <input type="checkbox" data-pick-id="${esc(b.id)}" ${lp.selected.has(b.id) ? 'checked' : ''}>
-          <div class="cover">${cover ? `<img loading="lazy" src="${esc(cover)}" alt="">` : '📖'}</div>
-          <div class="info"><div class="t">${esc(b.title)}</div><div class="s">${esc(sub)}</div></div>
-        </label>`;
-      })
-      .join('');
-
-    // 排序选项：书单专有的「已在书单优先」插在加入时间后面
-    const sortOptions = (() => {
-      const out = [];
-      for (const k of Object.keys(BOOK_SORTS)) {
-        out.push([k, BOOK_SORTS[k]]);
-        if (k === 'added-asc') out.push(['members-first', '已在书单优先']);
-      }
-      return out
-        .map(([k, label]) => `<option value="${esc(k)}" ${sortKey === k ? 'selected' : ''}>${esc(label)}</option>`)
-        .join('');
-    })();
-
-    $('#listPickTitle').textContent = `${l.name} · 选择书籍`;
-    $('#listPickBody').innerHTML = `
-      <div class="field-row" style="margin-bottom:10px;align-items:center">
-        <input id="listPickSearch" type="search" placeholder="搜索书架里的书" value="${esc(lp.query)}"
-          style="flex:1;min-width:0;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--bg-elev);padding:0 10px;outline:none">
-        <select id="listPickSort" title="排序方式"
-          style="flex:0 0 138px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--bg-elev);padding:0 8px;font-size:13px;color:var(--text-dim)">${sortOptions}</select>
-      </div>
-      <div class="hint" style="font-size:12px;color:var(--text-mute);margin-bottom:8px">
-        已选 <b id="listPickCount">${lp.selected.size}</b> 本 · 共 ${books.length} 本可选；取消勾选即从书单中移出
-      </div>
-      <div style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:12px">
-        ${rows || '<div class="center">没有匹配的书</div>'}
-      </div>
-      <div class="sticky-bar">
-        <button class="btn ghost" data-act="pick-all">全选</button>
-        <button class="btn ghost" data-act="pick-none">清空</button>
-        <button class="btn" data-act="pick-save">完成</button>
-      </div>`;
+    wrap.innerHTML = books.length
+      ? books
+          .map((b) => {
+            const cover = coverSrc(b);
+            const search = [b.title, (b.authors || []).join(' '), b.publisher, b.isbn13, b.autoCategoryName]
+              .join(' ')
+              .toLowerCase();
+            const sub = [
+              (b.authors || []).join(' / ') || '—',
+              showDate && b.addedAt ? `${String(b.addedAt).slice(0, 10)} 加入` : '',
+              inList.has(b.id) ? '已在书单' : '',
+            ]
+              .filter(Boolean)
+              .join(' · ');
+            return `<label class="pick-item" data-search="${esc(search)}">
+              <input type="checkbox" data-pick-id="${esc(b.id)}" ${lp.selected.has(b.id) ? 'checked' : ''}>
+              <div class="cover">${cover ? `<img loading="lazy" src="${esc(cover)}" alt="">` : '📖'}</div>
+              <div class="info"><div class="t">${esc(b.title)}</div><div class="s">${esc(sub)}</div></div>
+              </label>`;
+          })
+          .join('')
+      : '<div class="center">没有匹配的书</div>';
+    const c = $('#listPickCount');
+    if (c) c.textContent = lp.selected.size;
   }
 
-  function openListPicker(listId) {
+function openListPicker(listId) {
     const l = listById(listId);
     if (!l) return;
     state.listPick = {
@@ -2798,15 +2809,15 @@
       const sp = state.seriesPick;
       if (!sp || e.target.id !== 'seriesSearch') return;
       sp.query = e.target.value;
+      if (e.isComposing || e.inputType === 'insertCompositionText') return; // 输入法组字中，先别动列表
       clearTimeout(sp.timer);
-      sp.timer = setTimeout(() => {
-        drawSeriesPicker();
-        const i = $('#seriesSearch');
-        if (i) {
-          i.focus();
-          i.setSelectionRange(i.value.length, i.value.length);
-        }
-      }, 180);
+      sp.timer = setTimeout(renderSeriesRows, 120);
+    });
+    $('#seriesBody').addEventListener('compositionend', (e) => {
+      const sp = state.seriesPick;
+      if (!sp || e.target.id !== 'seriesSearch') return;
+      sp.query = e.target.value;
+      renderSeriesRows();
     });
     $('#seriesBody').addEventListener('click', async (e) => {
       const sp = state.seriesPick;
@@ -2889,15 +2900,15 @@
       const lp = state.movieListPick;
       if (!lp || e.target.id !== 'movieListPickSearch') return;
       lp.query = e.target.value;
+      if (e.isComposing || e.inputType === 'insertCompositionText') return;
       clearTimeout(lp.timer);
-      lp.timer = setTimeout(() => {
-        drawMovieListPicker();
-        const input = $('#movieListPickSearch');
-        if (input) {
-          input.focus();
-          input.setSelectionRange(input.value.length, input.value.length);
-        }
-      }, 180);
+      lp.timer = setTimeout(renderMovieListPickRows, 120);
+    });
+    $('#movieListPickBody').addEventListener('compositionend', (e) => {
+      const lp = state.movieListPick;
+      if (!lp || e.target.id !== 'movieListPickSearch') return;
+      lp.query = e.target.value;
+      renderMovieListPickRows();
     });
 
     // 片单页交互（电影模式）
@@ -4689,10 +4700,6 @@
   function drawSeriesPicker() {
     const sp = state.seriesPick;
     if (!sp) return;
-    const q = sp.query.trim().toLowerCase();
-    const list = state.movies
-      .filter((m) => !q || [m.title, (m.directors || []).join(' '), m.year].join(' ').toLowerCase().includes(q))
-      .sort((a, b) => String(b.year || '').localeCompare(String(a.year || '')));
     $('#seriesTitle').textContent = `加入系列：${sp.name}`;
     $('#seriesBody').innerHTML = `
       <div class="searchbox" style="margin-bottom:10px">
@@ -4701,28 +4708,39 @@
       <div class="hint" style="font-size:12px;color:var(--text-mute);margin-bottom:8px">
         勾选＝加入「${esc(sp.name)}」，取消勾选＝移出；已选 <b id="seriesCount">${sp.selected.size}</b> 部
       </div>
-      <div style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:12px">
-        ${
-          list.length
-            ? list
-                .map((m) => {
-                  const other = (m.collection || {}).name && (m.collection || {}).name !== sp.name ? (m.collection || {}).name : '';
-                  return `<label class="movie-pick-item">
-                    <input type="checkbox" data-spick-id="${esc(m.id)}" ${sp.selected.has(m.id) ? 'checked' : ''}>
-                    <div class="poster">${posterSrc(m) ? `<img loading="lazy" src="${esc(posterSrc(m))}" alt="">` : '🎬'}</div>
-                    <div class="info"><div class="t">${esc(m.title)}</div><div class="s">${esc(
-                    [m.year || '', m.type === 'tv' ? '剧集' : '电影', other ? `现属：${other}` : ''].filter(Boolean).join(' · ')
-                  )}</div></div>
-                  </label>`;
-                })
-                .join('')
-            : '<div class="center">没有匹配的影片</div>'
-        }
-      </div>
+      <div id="seriesRows" style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:12px"></div>
       <div class="sticky-bar">
         <button class="btn ghost" data-act="spick-none">清空</button>
         <button class="btn" data-act="spick-save">完成</button>
       </div>`;
+    renderSeriesRows();
+  }
+
+  /** 只重画列表，不重建输入框（否则中文输入法组字会被打断） */
+  function renderSeriesRows() {
+    const sp = state.seriesPick;
+    const wrap = $('#seriesRows');
+    if (!sp || !wrap) return;
+    const q = sp.query.trim().toLowerCase();
+    const list = state.movies
+      .filter((m) => !q || [m.title, (m.directors || []).join(' '), m.year].join(' ').toLowerCase().includes(q))
+      .sort((a, b) => String(b.year || '').localeCompare(String(a.year || '')));
+    wrap.innerHTML = list.length
+      ? list
+          .map((m) => {
+            const other = (m.collection || {}).name && (m.collection || {}).name !== sp.name ? (m.collection || {}).name : '';
+            return `<label class="movie-pick-item">
+              <input type="checkbox" data-spick-id="${esc(m.id)}" ${sp.selected.has(m.id) ? 'checked' : ''}>
+              <div class="poster">${posterSrc(m) ? `<img loading="lazy" src="${esc(posterSrc(m))}" alt="">` : '🎬'}</div>
+              <div class="info"><div class="t">${esc(m.title)}</div><div class="s">${esc(
+              [m.year || '', m.type === 'tv' ? '剧集' : '电影', other ? `现属：${other}` : ''].filter(Boolean).join(' · ')
+            )}</div></div>
+            </label>`;
+          })
+          .join('')
+      : '<div class="center">没有匹配的影片</div>';
+    const c = $('#seriesCount');
+    if (c) c.textContent = sp.selected.size;
   }
 
   async function applySeriesPick() {
@@ -5384,6 +5402,58 @@
         <button class="btn ghost" data-act="mpick-none">清空</button>
         <button class="btn" data-act="mpick-save">完成</button>
       </div>`;
+  }
+
+  /** 只重画片单挑片的列表（保住输入框，避免中文输入法被打断） */
+  function renderMovieListPickRows() {
+    const lp = state.movieListPick;
+    const wrap = $('#movieListPickRows');
+    if (!lp || !wrap) return;
+    const l = state.movieLists.find((x) => x.id === lp.listId);
+    if (!l) return;
+    const q = lp.query.trim().toLowerCase();
+    const inList = new Set(l.movieIds || []);
+    let movies = state.movies.filter(
+      (m) =>
+        !q ||
+        [m.title, m.originalTitle, (m.directors || []).join(' '), (m.actors || []).join(' '), (m.genres || []).join(' '), m.year]
+          .join(' ')
+          .toLowerCase()
+          .includes(q)
+    );
+    const year = (m) => Number(String(m.year || '').match(/\d{4}/) || 0);
+    const sortKey = lp.sort || 'added-desc';
+    movies = movies.slice().sort((a, b) => {
+      switch (sortKey) {
+        case 'added-asc':
+          return String(a.addedAt).localeCompare(String(b.addedAt));
+        case 'title-asc':
+          return String(a.title).localeCompare(String(b.title), 'zh-Hans-CN');
+        case 'year-desc':
+          return year(b) - year(a);
+        case 'rating-desc':
+          return (b.rating || 0) - (a.rating || 0);
+        case 'members-first':
+          return (inList.has(b.id) ? 1 : 0) - (inList.has(a.id) ? 1 : 0) || String(b.addedAt).localeCompare(String(a.addedAt));
+        default:
+          return String(b.addedAt).localeCompare(String(a.addedAt));
+      }
+    });
+    wrap.innerHTML = movies.length
+      ? movies
+          .map(
+            (m) => `<label class="movie-pick-item">
+              <input type="checkbox" data-mpick-id="${esc(m.id)}" ${lp.selected.has(m.id) ? 'checked' : ''}>
+              <div class="poster">${posterSrc(m) ? `<img loading="lazy" src="${esc(posterSrc(m))}" alt="">` : '🎬'}</div>
+              <div class="info"><div class="t">${esc(m.title)}</div><div class="s">${esc(
+              [m.year, (m.directors || [])[0], inList.has(m.id) ? '已在片单' : ''].filter(Boolean).join(' · ')
+            )}</div></div>
+            </label>`
+          )
+          .join('')
+      : '<div class="center">没有匹配的影片</div>';
+    const c = $('#movieListPickCount');
+    if (c) c.textContent = lp.selected.size;
   }
 
   async function applyMovieListPick(set) {
