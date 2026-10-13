@@ -741,10 +741,39 @@ function normalizeMovieInput(input = {}, base = {}) {
           .map((p) => ({ id: String(p.id || ''), name: String(p.name), job: String(p.job || ''), character: String(p.character || '') }))
           .slice(0, 40)
       : [],
+    // 剧集：季列表与已看季
+    seasons: (() => {
+      const src = input.seasons !== undefined ? input.seasons : base.seasons;
+      if (!Array.isArray(src)) return base.seasons || [];
+      return src
+        .filter((x) => x && Number(x.number) > 0)
+        .map((x) => ({
+          number: Number(x.number) || 0,
+          name: String(x.name || ''),
+          episodes: Number(x.episodes) || 0,
+          airDate: String(x.airDate || ''),
+          poster: String(x.poster || ''),
+        }))
+        .sort((a, b) => a.number - b.number);
+    })(),
+    seasonsCount: Number(input.seasonsCount != null ? input.seasonsCount : base.seasonsCount) || 0,
+    episodesCount: Number(input.episodesCount != null ? input.episodesCount : base.episodesCount) || 0,
+    watchedSeasons: (() => {
+      const src = input.watchedSeasons !== undefined ? input.watchedSeasons : base.watchedSeasons;
+      if (!Array.isArray(src)) return base.watchedSeasons || [];
+      return unique(src.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)).sort((a, b) => a - b);
+    })(),
     collection: (() => {
       const c = input.collection !== undefined ? input.collection : base.collection;
-      if (!c || !c.id) return base.collection || null;
-      return { id: String(c.id), name: String(c.name || '').trim(), poster: String(c.poster || '') };
+      if (c === null) return null; // 显式移出合集
+      if (!c || (!c.id && !c.name)) return base.collection || null;
+      // 手动合集没有 TMDb id，用名字归并（剧集同系列就靠它）
+      return {
+        id: String(c.id || ''),
+        name: String(c.name || '').trim(),
+        poster: String(c.poster || ''),
+        manual: !c.id,
+      };
     })(),
     mergedFrom: input.mergedFrom != null ? coerceList(input.mergedFrom) : base.mergedFrom || [],
     ratings: (() => {

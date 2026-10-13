@@ -431,6 +431,21 @@ function fromTmdbDetail(data, mediaType) {
     durations: data.runtime ? [`${data.runtime}分钟`] : isTv && data.episode_run_time && data.episode_run_time[0] ? [`${data.episode_run_time[0]}分钟`] : [],
     releaseDates: [data.release_date || data.first_air_date || ''].filter(Boolean),
     aka: unique([...(zhAlt || []), ...((data.alternative_titles && data.alternative_titles.titles) || []).map((t) => clean(t.title))]).slice(0, 10),
+    // 剧集的季列表（TMDb 的 tv 详情自带；TV 没有 belongs_to_collection，同系列靠手动归并）
+    seasons: isTv
+      ? (data.seasons || [])
+          .filter((x) => x && x.season_number > 0)
+          .map((x) => ({
+            number: Number(x.season_number) || 0,
+            name: clean(x.name || ''),
+            episodes: Number(x.episode_count) || 0,
+            airDate: String(x.air_date || ''),
+            poster: x.poster_path ? TMDB_IMG + x.poster_path : '',
+          }))
+          .sort((a, b) => a.number - b.number)
+      : [],
+    seasonsCount: isTv ? Number(data.number_of_seasons) || 0 : 0,
+    episodesCount: isTv ? Number(data.number_of_episodes) || 0 : 0,
     // TMDb 原生合集（007系列 / 漫威 / 哈利波特 …）
     collection: data.belongs_to_collection
       ? {
@@ -579,6 +594,13 @@ function mergeRecords(records) {
     releaseDates: preferListCJK('releaseDates'),
     aka: union('aka').slice(0, 10),
     collection: (list.find((r) => r.collection && r.collection.id) || {}).collection || null,
+    seasons: (() => {
+      let best = [];
+      for (const r of list) if ((r.seasons || []).length > best.length) best = r.seasons;
+      return best;
+    })(),
+    seasonsCount: prefer('seasonsCount', 0) || 0,
+    episodesCount: prefer('episodesCount', 0) || 0,
     poster: prefer('poster'),
     summary: preferCJK('summary'),
     rating: 0,
@@ -672,6 +694,36 @@ async function resolveImdbId({ title, originalTitle, aka, year }) {
     if (hit) return hit.sourceId;
   }
   return '';
+}
+
+/** 没有 tmdbId / imdbId 时，按片名（+年份）在 TMDb 找——剧集靠它才能拿到季列表 */
+async function tmdbFindByTitle(title, year, type, apiKey) {
+  const q = String(title || '').trim();
+  if (!q) return null;
+  const isTv = type === 'tv';
+  const params = { query: q };
+  if (year) params[isTv ? 'first_air_date_year' : 'year'] = String(year).slice(0, 4);
+  let data;
+  try {
+    data = await tmdbGet(isTv ? '/search/tv' : '/search/movie', apiKey, params);
+  } catch (err) {
+    return null;
+  }
+  const list = data.results || [];
+  const scored = list
+    .map((r) => {
+      const name = clean(r.title || r.name || '');
+      const y = String(r.release_date || r.first_air_date || '').slice(0, 4);
+      return { r, y, s: similarity(name, q) + (year && y && Math.abs(Number(y) - Number(String(year).slice(0, 4))) <= 1 ? 0.3 : 0) };
+    })
+    .sort((a, b) => b.s - a.s);
+  const best = scored[0];
+  if (!best || best.s < 0.6) return null;
+  try {
+    return await tmdbDetail(`${isTv ? 'tv' : 'movie'}/${best.r.id}`, apiKey);
+  } catch (err) {
+    return null;
+  }
 }
 
 async function tmdbFindByImdb(imdbId, apiKey) {
@@ -1041,7 +1093,11 @@ async function lookup(query) {
   if (primary.source !== 'tmdb' && tmdbKey) {
     tasks.push(
       grab('tmdb', 'TMDb', () =>
-        tmdbId ? tmdbDetail(`${primary.type === 'tv' ? 'tv' : 'movie'}/${tmdbId}`, tmdbKey) : imdbId ? tmdbFindByImdb(imdbId, tmdbKey) : null
+        tmdbId
+          ? tmdbDetail(`${primary.type === 'tv' ? 'tv' : 'movie'}/${tmdbId}`, tmdbKey)
+          : imdbId
+          ? tmdbFindByImdb(imdbId, tmdbKey)
+          : tmdbFindByTitle(primary.title, primary.year, primary.type, tmdbKey) // 国产剧多无 imdb/tmdb id，按片名找
       ).then((r) => r && collected.push(r))
     );
   }
@@ -1101,6 +1157,7 @@ module.exports = {
   search,
   lookup,
   tmdbCollection,
+  tmdbFindByTitle,
   personWorks,
   checkSources,
   setDoubanCookie,

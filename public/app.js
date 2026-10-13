@@ -593,7 +593,9 @@
       const collMap = new Map();
       for (const m of state.movies) {
         const c = m.collection;
-        if (c && c.id) collMap.set(String(c.id), { id: String(c.id), name: c.name || '未命名合集', n: (collMap.get(String(c.id)) || { n: 0 }).n + 1 });
+        if (!c || !c.name) continue;
+        const key = c.id ? `c:${c.id}` : `m:${c.name}`;
+        collMap.set(key, { key, name: c.name, manual: !c.id, n: (collMap.get(key) || { n: 0 }).n + 1 });
       }
       const colls = [...collMap.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name, 'zh-Hans-CN'));
       catSel.innerHTML =
@@ -602,8 +604,8 @@
           .map((g) => `<option value="g:${esc(g)}">${esc(g)}</option>`)
           .join('')}</optgroup>` +
         (colls.length
-          ? `<optgroup label="合集">${colls
-              .map((c) => `<option value="c:${esc(c.id)}">${esc(c.name)}（${c.n}）</option>`)
+          ? `<optgroup label="合集 / 系列">${colls
+              .map((c) => `<option value="${esc(c.key)}">${esc(c.name)}（${c.n}）${c.manual ? ' · 手动' : ''}</option>`)
               .join('')}</optgroup>`
           : '');
       tagSel.innerHTML =
@@ -623,7 +625,7 @@
         .map(([k, label]) => `<option value="${k}">${label}</option>`)
         .join('');
       catSel.value = state.movieFilters.collection
-        ? `c:${state.movieFilters.collection}`
+        ? state.movieFilters.collection
         : state.movieFilters.genre
         ? `g:${state.movieFilters.genre}`
         : '';
@@ -2425,8 +2427,8 @@
     $('#filterCategory').addEventListener('change', (e) => {
       if (state.mode === 'movie') {
         const v = e.target.value;
-        if (v.startsWith('c:')) {
-          state.movieFilters.collection = v.slice(2);
+        if (v.startsWith('c:') || v.startsWith('m:')) {
+          state.movieFilters.collection = v;
           state.movieFilters.genre = '';
         } else if (v.startsWith('g:')) {
           state.movieFilters.genre = v.slice(2);
@@ -2569,6 +2571,22 @@
         await toggleMovieInList(listBtn.dataset.movieList);
         return;
       }
+      const seasonCard = e.target.closest('[data-season]');
+      if (seasonCard) {
+        const n = Number(seasonCard.dataset.season);
+        const set = new Set(d.movie.watchedSeasons || []);
+        if (set.has(n)) set.delete(n);
+        else set.add(n);
+        const arr = [...set].sort((a, b) => a - b);
+        const patch = { watchedSeasons: arr };
+        const total = (d.movie.seasons || []).length;
+        // 顺手调整总状态，避免"8/8 季却还是想看"
+        if (total && arr.length >= total) patch.status = 'watched';
+        else if (arr.length && (d.movie.status === 'wish' || d.movie.status === 'watched')) patch.status = 'watching';
+        await autoSaveMovie(patch);
+        renderMovieSheet();
+        return;
+      }
       const action = e.target.closest('[data-action]');
       if (!action) return;
       const act = action.dataset.action;
@@ -2672,6 +2690,33 @@
           `导入 ${missing} 部影片 · 观看状态`
         );
         return;
+      } else if (act === 'season-all') {
+        const total = (d.movie.seasons || []).length;
+        const all = (d.movie.watchedSeasons || []).length >= total;
+        const arr = all ? [] : (d.movie.seasons || []).map((x) => x.number);
+        const patch = { watchedSeasons: arr };
+        if (!all && total) patch.status = 'watched';
+        else if (all) patch.status = 'watching';
+        await autoSaveMovie(patch);
+        renderMovieSheet();
+      } else if (act === 'manual-collection-set' || act === 'manual-collection-rename') {
+        const cur = (d.movie.collection && !d.movie.collection.id && d.movie.collection.name) || '';
+        const name = window.prompt('系列名称（同系列的影片填同一个名字，例如：冰与火之歌）', cur);
+        if (name == null) return;
+        const clean = name.trim();
+        if (!clean) {
+          toast('系列名不能为空', 'err');
+          return;
+        }
+        await autoSaveMovie({ collection: { id: '', name: clean, manual: true } });
+        await refresh();
+        renderMovieSheet();
+        toast(`已归入系列「${clean}」`);
+      } else if (act === 'manual-collection-clear') {
+        if (!window.confirm('把这个影片移出该系列？（不会删除影片本身）')) return;
+        await autoSaveMovie({ collection: null });
+        await refresh();
+        renderMovieSheet();
       } else if (act === 'movie-collection-refresh') {
         state.movieCollection = null;
         ensureMovieCollection(true);
@@ -3782,7 +3827,14 @@
     let list = state.movies.slice();
     if (f.kind) list = list.filter((m) => (m.type === 'tv' ? 'tv' : 'movie') === f.kind);
     if (f.status) list = list.filter((m) => m.status === f.status);
-    if (f.collection) list = list.filter((m) => String((m.collection || {}).id || '') === String(f.collection));
+    if (f.collection) {
+      const key = String(f.collection);
+      list = list.filter((m) => {
+        const c = m.collection || {};
+        if (!c.name) return false;
+        return key.startsWith('m:') ? !c.id && c.name === key.slice(2) : String(c.id) === key.slice(2);
+      });
+    }
     if (f.genre) list = list.filter((m) => (m.genres || []).includes(f.genre));
     if (f.tag) list = list.filter((m) => (m.tags || []).includes(f.tag));
     if (q) {
@@ -3916,11 +3968,16 @@
     if (countEl) countEl.textContent = state.movies.length ? `共 ${state.movies.length} 部` : '';
     const kindLabel = state.movieFilters.kind === 'movie' ? '电影' : state.movieFilters.kind === 'tv' ? '剧集' : '';
     const statusLabel = (state.movieStatuses[state.movieFilters.status] || {}).label || '';
-    const collName =
-      (state.movieFilters.collection &&
-        ((state.movies.find((m) => String((m.collection || {}).id || '') === String(state.movieFilters.collection)) || {})
-          .collection || {}).name) ||
-      '';
+    const collName = (() => {
+      const key = String(state.movieFilters.collection || '');
+      if (!key) return '';
+      const hit = state.movies.find((m) => {
+        const c = m.collection || {};
+        if (!c.name) return false;
+        return key.startsWith('m:') ? !c.id && c.name === key.slice(2) : String(c.id) === key.slice(2);
+      });
+      return (hit && hit.collection && hit.collection.name) || '';
+    })();
     const rightTags = [collName, state.movieFilters.genre, kindLabel, statusLabel].filter(Boolean).join(' · ') || '全部';
     const summary = `<div class="shelf-summary"><span>当前显示 ${list.length} 部${
       kindLabel ? `（${esc(kindLabel)}）` : ''
@@ -4183,6 +4240,42 @@
         <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-top:6px">点一下即时生效：勾选＝加入片单，取消勾选＝从该片单移出</div>
       </div>
 
+      ${
+        !d.isNew && (m.seasons || []).length
+          ? (() => {
+              const seasons = m.seasons || [];
+              const watched = new Set(m.watchedSeasons || []);
+              const epsTotal = seasons.reduce((a, x) => a + (x.episodes || 0), 0);
+              const epsWatched = seasons.filter((x) => watched.has(x.number)).reduce((a, x) => a + (x.episodes || 0), 0);
+              const allWatched = seasons.length && watched.size >= seasons.length;
+              return `<div class="field"><label>季与进度
+                <span class="hint" style="font-weight:400">（看过 ${watched.size}/${seasons.length} 季 · ${epsWatched}/${epsTotal} 集）</span></label>
+                <div class="season-grid">
+                  ${seasons
+                    .map(
+                      (x) => `<button class="season-card ${watched.has(x.number) ? 'on' : ''}" data-season="${x.number}"
+                        title="${esc(x.name || `第 ${x.number} 季`)}">
+                        <div class="poster">${x.poster ? `<img loading="lazy" src="${esc(x.poster)}" alt="">` : '📺'}</div>
+                        <div class="sn">S${x.number}</div>
+                        <div class="se">${x.episodes ? `${x.episodes} 集` : ''}${
+                        x.airDate ? ` · ${String(x.airDate).slice(0, 4)}` : ''
+                      }</div>
+                        ${watched.has(x.number) ? '<span class="tick">✓</span>' : ''}
+                      </button>`
+                    )
+                    .join('')}
+                </div>
+                <div class="btn-row" style="margin-top:8px">
+                  <button class="btn ghost sm" data-action="season-all">${
+                    allWatched ? '取消全部' : '全部标记看过'
+                  }</button>
+                  <span class="hint" style="align-self:center;font-size:11.5px">点某一季可单独标记</span>
+                </div>
+              </div>`;
+            })()
+          : ''
+      }
+
       <div class="field"><label>备注</label>
         <textarea id="movieNote" rows="2" placeholder="在哪看的、和谁看的、想记的点…">${esc(m.note || '')}</textarea>
         <div class="inline-form" style="margin-top:8px;justify-content:flex-end">
@@ -4249,6 +4342,58 @@
                   }</div><div class="t">${esc(x.movie.title)}</div><div class="s">${esc(x.reason)}</div></button>`
               )
               .join('')}</div></div>`
+          : ''
+      }
+
+      ${
+        !d.isNew && (!m.collection || !m.collection.name)
+          ? `<div class="field"><label>同系列（手动归并）</label>
+              <div class="picker">
+                <button class="pill add" data-action="manual-collection-set">＋ 归入某个系列</button>
+              </div>
+              <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-top:6px">
+                TMDb 的剧集没有"合集"概念（例如《权力的游戏》与《龙之家族》互不关联），
+                可以手动把同系列的剧集归到一起：输入系列名（如「冰与火之歌」），
+                之后在片库按合集分组、或按合集筛选就能一起看。
+              </div>
+            </div>`
+          : ''
+      }
+
+      ${
+        !d.isNew && m.collection && !m.collection.id && m.collection.name
+          ? `<div class="field"><label>同系列：${esc(m.collection.name)} ${
+              (() => {
+                const sib = state.movies.filter(
+                  (x) => x.id !== m.id && (x.collection || {}).name === m.collection.name && !(x.collection || {}).id
+                );
+                return sib.length ? `<span class="hint" style="font-weight:400">（片库另有 ${sib.length} 部）</span>` : '';
+              })()
+            }</label>
+              ${
+                (() => {
+                  const sib = state.movies.filter(
+                    (x) => x.id !== m.id && (x.collection || {}).name === m.collection.name && !(x.collection || {}).id
+                  );
+                  return sib.length
+                    ? `<div class="sim-row">${sib
+                        .map(
+                          (x) => `<button class="sim-card" data-movie="${esc(x.id)}">
+                            <div class="cover">${posterSrc(x) ? `<img loading="lazy" src="${esc(posterSrc(x))}" alt="">` : '🎬'}${
+                            x.type === 'tv' ? '<span class="agree">剧集</span>' : ''
+                          }</div>
+                            <div class="t">${esc(x.title)}</div>
+                            <div class="s">${esc(x.year || '')}</div></button>`
+                        )
+                        .join('')}</div>`
+                    : '<div class="hint">片库里还没有同系列的其它影片</div>';
+                })()
+              }
+              <div class="btn-row" style="margin-top:8px">
+                <button class="btn ghost sm" data-action="manual-collection-rename">重命名</button>
+                <button class="btn ghost sm danger" data-action="manual-collection-clear">移出系列</button>
+              </div>
+            </div>`
           : ''
       }
 
