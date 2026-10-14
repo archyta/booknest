@@ -379,6 +379,7 @@ function normalizeBookInput(input = {}, base = {}) {
     tagIds: input.tagIds != null ? unique(input.tagIds.map(String)) : base.tagIds || [],
     note: clampText(String(input.note != null ? input.note : base.note || ''), 4000),
     doubanPending: String(input.doubanPending != null ? input.doubanPending : base.doubanPending || ''),
+    collectionCheckedAt: String(input.collectionCheckedAt != null ? input.collectionCheckedAt : base.collectionCheckedAt || ''),
     doubanPushedAt: String(input.doubanPushedAt != null ? input.doubanPushedAt : base.doubanPushedAt || ''),
     myRating: Number(input.myRating != null ? input.myRating : base.myRating) || 0,
     progress: Math.max(0, Math.min(100, Number(input.progress != null ? input.progress : base.progress) || 0)),
@@ -850,6 +851,7 @@ function normalizeMovieInput(input = {}, base = {}) {
     myRating: Number(input.myRating != null ? input.myRating : base.myRating) || 0,
     note: clampText(String(input.note != null ? input.note : base.note || ''), 4000),
     doubanPending: String(input.doubanPending != null ? input.doubanPending : base.doubanPending || ''),
+    collectionCheckedAt: String(input.collectionCheckedAt != null ? input.collectionCheckedAt : base.collectionCheckedAt || ''),
     doubanPushedAt: String(input.doubanPushedAt != null ? input.doubanPushedAt : base.doubanPushedAt || ''),
     watchedAt:
       status === 'watched' && !base.watchedAt

@@ -4409,6 +4409,7 @@ function openListPicker(listId) {
       ensureMovieRelated();
       ensureMovieCollection();
       refreshSeasons(false); // 进详情自动刷一次（1 小时内不重复）
+      ensureMovieCollectionInfo(); // 进详情自动补一次合集（TMDb）
     }
   }
 

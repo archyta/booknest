@@ -1055,6 +1055,30 @@ async function handleApi(req, res, url) {
     });
   }
 
+  /** 单部影片的合集刷新（详情页打开时自动调用） */
+  if (p.match(/^\/api\/movies\/([^/]+)\/collection-refresh$/) && req.method === 'POST') {
+    const id = decodeId(p.match(/^\/api\/movies\/([^/]+)\/collection-refresh$/)[1]);
+    const m = store.getMovie(id);
+    if (!m) return sendJson(res, 404, { error: '影片不存在' });
+    if (m.type === 'tv') return sendJson(res, 200, { movie: m, skipped: 'tv' });
+    const key = tmdbKey();
+    if (!key) return sendJson(res, 200, { movie: m, error: '需要 TMDb API Key' });
+    try {
+      const rec = m.tmdbId
+        ? await movie.tmdbDetail(`movie/${m.tmdbId}`, key)
+        : await movie.tmdbFindByTitle(m.title, m.year, 'movie', key);
+      const patch = { collectionCheckedAt: nowIso(), tmdbId: m.tmdbId || (rec && rec.tmdbId) || '' };
+      if (rec && rec.collection && rec.collection.id) {
+        patch.collection = { id: String(rec.collection.id), name: rec.collection.name || '', poster: rec.collection.poster || '' };
+      }
+      const updated = store.updateMovie(id, patch);
+      return sendJson(res, 200, { movie: updated, found: !!(rec && rec.collection && rec.collection.id) });
+    } catch (err) {
+      store.updateMovie(id, { collectionCheckedAt: nowIso() });
+      return sendJson(res, 200, { movie: m, error: err.message || '查询失败' });
+    }
+  }
+
   /** 分批补全影片合集（TMDb belongs_to_collection）：一次处理 limit 部，适合云端小请求 */
   if (p === '/api/movies/collections-backfill' && req.method === 'POST') {
     const key = tmdbKey();
