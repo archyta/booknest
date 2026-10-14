@@ -903,6 +903,7 @@ async function handleApi(req, res, url) {
     const uid = doubanUser.parseUserId(cookie);
     if (!uid) return sendJson(res, 400, { error: 'Cookie 里没找到 dbcl2，请把浏览器里的整条 Cookie 复制过来' });
     const kind = body.kind === 'book' ? 'book' : 'movie';
+    const dryRun = body.dryRun === true; // 预览：只统计，不写库
     const norm0 = (s2) => String(s2 || '').toLowerCase().replace(/[\s\-_:：·,，.。()（）\[\]【】《》]/g, '');
     // 已入库的判断给到抓取层：长的收藏列表可以边翻页边跳过，多次同步能逐步推进
     const known = (item) =>
@@ -921,6 +922,21 @@ async function handleApi(req, res, url) {
       data = await doubanUser.fetchAll({ cookie, uid, kind, known });
     } catch (err) {
       return sendJson(res, 502, { error: err.message || '豆瓣接口请求失败' });
+    }
+    if (dryRun) {
+      return sendJson(res, 200, {
+        ok: true,
+        kind,
+        uid,
+        dryRun: true,
+        summary: data.summary,
+        byStatus: data.byStatus,
+        total: data.total,
+        wouldAdd: data.items.length,
+        scanned: data.scanned,
+        skippedKnown: data.skippedKnown,
+        samples: data.items.slice(0, 8).map((x) => ({ title: x.title, year: x.year || '', status: x.status, doubanStatus: x.doubanStatus })),
+      });
     }
     if (!data.items.length) {
       return sendJson(res, 200, {
@@ -994,6 +1010,9 @@ async function handleApi(req, res, url) {
             year: item.year || '',
             type: item.type || 'movie',
             genres: item.genres || [],
+            countries: item.countries || [],
+            directors: item.directors || [],
+            actors: item.actors || [],
             posterRemote: item.posterRemote || '',
             rating: item.rating || 0,
             ratingCount: item.ratingCount || 0,
@@ -1015,6 +1034,7 @@ async function handleApi(req, res, url) {
       kind,
       uid,
       summary: data.summary,
+      byStatus: data.byStatus,
       total: data.total,
       scanned: data.scanned,
       skippedKnown: data.skippedKnown,
