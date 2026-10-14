@@ -2281,6 +2281,7 @@ function openListPicker(listId) {
       </div>
       <div class="section">
         <div class="section-head"><h3>数据源</h3><button class="btn sm ghost" data-action="check-providers">重新检测</button></div>
+        <button class="btn ghost sm" data-action="backfill-collections">补全合集信息</button>
         <div class="src-list">
           ${(state.providers || [])
             .map(
@@ -3788,6 +3789,34 @@ function openListPicker(listId) {
           await loadDoubanPending();
           renderSettings();
           toast(`已标记 ${res.cleared} 条为已同步`);
+        } else if (action === 'backfill-collections') {
+          const label0 = el.textContent;
+          el.disabled = true;
+          let processed = 0;
+          let found = 0;
+          let round = 0;
+          try {
+            for (; round < 300; round += 1) {
+              el.textContent = `补全中… 已处理 ${processed}`;
+              const res = await api('/api/movies/collections-backfill', { method: 'POST', body: { limit: 8 } });
+              if (res.error) {
+                toast(res.error, 'err');
+                break;
+              }
+              processed += res.processed || 0;
+              found += res.found || 0;
+              if (!res.remaining || !res.processed) {
+                toast(`合集补全完成：处理 ${processed} 部，找到合集 ${found} 部`);
+                break;
+              }
+              await refresh();
+            }
+          } catch (err) {
+            toast(`补全失败：${err.message}`, 'err');
+          } finally {
+            el.disabled = false;
+            el.textContent = label0;
+          }
         } else if (action === 'douban-preview' || action === 'douban-sync-pick' || action === 'douban-sync-auto') {
           const kind = el.dataset.kind === 'book' ? 'book' : 'movie';
           const statuses = $$(`[data-sync-status^="${kind}|"]`)

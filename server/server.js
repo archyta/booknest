@@ -1055,6 +1055,50 @@ async function handleApi(req, res, url) {
     });
   }
 
+  /** 分批补全影片合集（TMDb belongs_to_collection）：一次处理 limit 部，适合云端小请求 */
+  if (p === '/api/movies/collections-backfill' && req.method === 'POST') {
+    const key = tmdbKey();
+    if (!key) return sendJson(res, 200, { error: '需要 TMDb API Key（设置页填写）' });
+    const body = await readBody(req);
+    const limit = Math.min(20, Math.max(1, Number(body.limit) || 10));
+    const targets = store
+      .listMovies()
+      .filter((m) => m.type !== 'tv' && !((m.collection || {}).id) && (m.tmdbId || (m.title && m.year)))
+      .slice(0, limit);
+    let processed = 0;
+    let found = 0;
+    let failed = 0;
+    const samples = [];
+    for (const m of targets) {
+      processed += 1;
+      try {
+        const rec = m.tmdbId
+          ? await movie.tmdbDetail(`movie/${m.tmdbId}`, key)
+          : await movie.tmdbFindByTitle(m.title, m.year, 'movie', key);
+        if (rec && rec.collection && rec.collection.id) {
+          store.updateMovie(m.id, {
+            collection: {
+              id: String(rec.collection.id),
+              name: rec.collection.name || '',
+              poster: rec.collection.poster || '',
+            },
+            tmdbId: m.tmdbId || rec.tmdbId || '',
+          });
+          found += 1;
+          samples.push(`${m.title} → ${rec.collection.name}`);
+        } else if (rec && rec.tmdbId && !m.tmdbId) {
+          store.updateMovie(m.id, { tmdbId: rec.tmdbId }); // 记下 id，下次可直连
+        }
+      } catch (err) {
+        failed += 1;
+      }
+    }
+    const remaining = store
+      .listMovies()
+      .filter((m) => m.type !== 'tv' && !((m.collection || {}).id) && (m.tmdbId || (m.title && m.year))).length;
+    return sendJson(res, 200, { ok: true, processed, found, failed, remaining, samples });
+  }
+
   /** 只刷新剧集的"季"信息（单次 TMDb 请求，不动标题/评分等其它字段） */
   if (p.match(/^\/api\/movies\/([^/]+)\/refresh-seasons$/) && req.method === 'POST') {
     const id = decodeId(p.match(/^\/api\/movies\/([^/]+)\/refresh-seasons$/)[1]);
