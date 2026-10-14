@@ -2282,6 +2282,8 @@ function openListPicker(listId) {
       <div class="section">
         <div class="section-head"><h3>数据源</h3><button class="btn sm ghost" data-action="check-providers">重新检测</button></div>
         <button class="btn ghost sm" data-action="backfill-collections">补全合集信息</button>
+        <button class="btn ghost sm" data-action="prewarm-covers">缓存封面</button>
+        <div id="coverBox" style="font-size:12px;color:var(--text-mute);margin-top:6px"></div>
         <div id="backfillBox" style="font-size:12px;color:var(--text-mute);margin-top:6px"></div>
         <div class="src-list">
           ${(state.providers || [])
@@ -3828,6 +3830,44 @@ function openListPicker(listId) {
             el.disabled = false;
             el.textContent = label0;
             bfPaint(processed, 0);
+          }
+        } else if (action === 'prewarm-covers') {
+          const label0 = el.textContent;
+          el.disabled = true;
+          let cached = 0;
+          let failed = 0;
+          let remain = null;
+          const paintC = (txt) => {
+            const box = $('#coverBox');
+            if (!box) return;
+            const tot = cached + failed + (remain || 0) || 1;
+            const pct = Math.min(100, Math.round(((cached + failed) / tot) * 100));
+            box.innerHTML = `<div style="height:8px;border-radius:5px;background:var(--bg-soft);overflow:hidden;margin-bottom:5px">
+                <div style="height:100%;width:${pct}%;background:var(--brand);transition:width .25s"></div></div>
+              <div>${txt}</div>`;
+          };
+          try {
+            for (let round = 0; round < 400; round += 1) {
+              paintC(`已缓存 ${cached} · 失败 ${failed} · 剩余 ${remain == null ? '?' : remain}`);
+              const res = await api('/api/covers/prewarm', { method: 'POST', body: { limit: 12 } });
+              if (res.error) {
+                toast(res.error, 'err');
+                break;
+              }
+              cached += res.cached || 0;
+              failed += res.failed || 0;
+              remain = res.remaining;
+              if (!res.processed || !remain) {
+                paintC(`<b style="color:var(--brand)">完成</b> · 已缓存 ${cached} · 失败 ${failed}`);
+                toast(`封面缓存完成：${cached} 张`);
+                break;
+              }
+            }
+          } catch (err) {
+            toast(`缓存失败：${err.message}`, 'err');
+          } finally {
+            el.disabled = false;
+            el.textContent = label0;
           }
         } else if (action === 'douban-preview' || action === 'douban-sync-pick' || action === 'douban-sync-auto') {
           const kind = el.dataset.kind === 'book' ? 'book' : 'movie';

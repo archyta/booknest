@@ -1085,6 +1085,44 @@ async function handleApi(req, res, url) {
     });
   }
 
+  /** 批量预热封面：把远端海报/封面抓进本地磁盘缓存，之后都是本地文件 */
+  if (p === '/api/covers/prewarm' && req.method === 'POST') {
+    const body = await readBody(req);
+    const limit = Math.min(40, Math.max(1, Number(body.limit) || 12));
+    const all = [
+      ...store.listMovies().map((m) => ({ kind: 'movie', id: m.id, title: m.title, url: m.posterRemote || '' })),
+      ...store.listBooks().map((b) => ({ kind: 'book', id: b.id, title: b.title, url: b.coverRemote || '' })),
+    ].filter((x) => x.url && !store.imageCached(x.url));
+    const targets = all.slice(0, limit);
+    let cached = 0;
+    let failed = 0;
+    // 小并发（6）加速：串行时每张约 1~2 秒，1700 张要几十分钟
+    const POOL = 6;
+    for (let i = 0; i < targets.length; i += POOL) {
+      const slice = targets.slice(i, i + POOL);
+      const rs = await Promise.all(
+        slice.map((t) =>
+          store
+            .cachedImage(t.url)
+            .then(() => true)
+            .catch(() => false)
+        )
+      );
+      for (const ok of rs) {
+        if (ok) cached += 1;
+        else failed += 1;
+      }
+    }
+    return sendJson(res, 200, {
+      ok: true,
+      processed: targets.length,
+      cached,
+      failed,
+      remaining: Math.max(0, all.length - targets.length),
+      samples: targets.slice(0, 3).map((t) => t.title),
+    });
+  }
+
   /** 单部影片的合集刷新（详情页打开时自动调用） */
   if (p.match(/^\/api\/movies\/([^/]+)\/collection-refresh$/) && req.method === 'POST') {
     const id = decodeId(p.match(/^\/api\/movies\/([^/]+)\/collection-refresh$/)[1]);

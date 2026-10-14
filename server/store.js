@@ -1211,6 +1211,16 @@ function pruneUploads(maxAgeMs = 7 * 24 * 3600 * 1000) {
 }
 
 /** 图片代理用的磁盘缓存（按 URL 哈希） */
+/** 该远端图是否已在磁盘缓存里 */
+function imageCached(url) {
+  if (!url) return true;
+  const hash = crypto.createHash('sha1').update(url).digest('hex').slice(0, 24);
+  for (const ext of ['.jpg', '.png', '.webp', '.gif']) {
+    if (fs.existsSync(path.join(COVER_DIR, `p_${hash}${ext}`))) return true;
+  }
+  return false;
+}
+
 async function cachedImage(url) {
   const hash = crypto.createHash('sha1').update(url).digest('hex').slice(0, 24);
   ensureDirs();
@@ -1371,6 +1381,7 @@ module.exports = {
   wipe,
   autoCategorizeAll,
   autoCategorizeOne,
+  imageCached,
   localizeCover,
   cachedImage,
   isAllowedImageUrl,
