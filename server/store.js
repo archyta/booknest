@@ -364,6 +364,7 @@ function normalizeBookInput(input = {}, base = {}) {
     subjects: input.subjects != null ? coerceArray(input.subjects) : base.subjects || [],
     source: String(input.source != null ? input.source : base.source || (input.manual ? 'manual' : '')).trim(),
     sourceUrl: String(input.sourceUrl != null ? input.sourceUrl : base.sourceUrl || '').trim(),
+    sourceId: String(input.sourceId != null ? input.sourceId : base.sourceId || '').trim(),
     autoCategoryName: String(
       input.autoCategoryName != null
         ? input.autoCategoryName
