@@ -5907,6 +5907,14 @@ function openListPicker(listId) {
       }
       toast(`已更新片单：+${add.length} / -${remove.length}`);
       await refresh();
+      // 立刻重画底下的片单详情（否则要关掉片单重进才看得到）
+      const fresh = state.movieLists.find((x) => x.id === lp.listId) || l;
+      if (state.movieCurrentListId === lp.listId) renderMovieListDetail(lp.listId);
+      renderMovieLists();
+      if (state.sheetOpen === '#sheetMovieListPick' || true) {
+        /* 保持选择面板状态，但让它引用的片单是最新的 */
+        lp.selected = new Set(fresh.movieIds || []);
+      }
     } catch (err) {
       toast(`更新失败：${err.message}`, 'err');
     }
