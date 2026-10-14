@@ -808,7 +808,9 @@ async function handleApi(req, res, url) {
   }
 
   /** 本地改动 → 记入"待推送豆瓣"队列（豆瓣写接口需要 App 鉴权，无法直接推送） */
-  const markDoubanPending = (kind, before, after) => {
+  // 用函数声明（会被提升）：书籍/影片的 PATCH 路由在本文件更靠前的位置调用它，
+  // 若写成 const 箭头函数会触发 "Cannot access 'markDoubanPending' before initialization"
+  function markDoubanPending(kind, before, after) {
     if (!before || !after) return;
     if (after.source !== 'douban' || !after.sourceId) return;
     const changed =
@@ -820,7 +822,7 @@ async function handleApi(req, res, url) {
     if (kind === 'book') store.updateBook(after.id, patch);
     else store.updateMovie(after.id, patch);
     after.doubanPending = patch.doubanPending;
-  };
+  }
 
   /** 待推送到豆瓣的清单 */
   if (p === '/api/douban/pending' && req.method === 'GET') {
