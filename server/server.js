@@ -3,6 +3,7 @@
 /* 书巢 BookNest —— 零依赖 HTTP/HTTPS 服务：静态资源 + REST API + 封面代理 */
 
 const http = require('http');
+const zlib = require('zlib');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
@@ -82,8 +83,26 @@ function send(res, status, body, headers = {}) {
     'X-Content-Type-Options': 'nosniff',
     ...headers,
   };
+  // 大响应做 gzip：/api/bootstrap 在云端数据量下约 2.6MB，
+  // 不压缩时手机/经 Cloudflare 拉取会慢到"好几分钟才出数据"
+  const accept = String((res && res.req && res.req.headers && res.req.headers['accept-encoding']) || '');
+  const ct = String(base['Content-Type'] || '');
+  const compressible = /json|javascript|text|css|svg|xml/.test(ct);
+  const isHead = res.req && res.req.method === 'HEAD';
+  if (!isHead && payload.length > 1024 && compressible && /\bgzip\b/.test(accept)) {
+    zlib.gzip(Buffer.from(payload), (err, buf) => {
+      if (err) {
+        res.writeHead(status, base);
+        res.end(payload);
+        return;
+      }
+      res.writeHead(status, { ...base, 'Content-Encoding': 'gzip', 'Content-Length': buf.length, Vary: 'Accept-Encoding' });
+      res.end(buf);
+    });
+    return;
+  }
   res.writeHead(status, base);
-  if (res.req && res.req.method === 'HEAD') res.end();
+  if (isHead) res.end();
   else res.end(payload);
 }
 
