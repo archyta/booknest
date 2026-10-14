@@ -2282,6 +2282,7 @@ function openListPicker(listId) {
       <div class="section">
         <div class="section-head"><h3>数据源</h3><button class="btn sm ghost" data-action="check-providers">重新检测</button></div>
         <button class="btn ghost sm" data-action="backfill-collections">补全合集信息</button>
+        <div id="backfillBox" style="font-size:12px;color:var(--text-mute);margin-top:6px"></div>
         <div class="src-list">
           ${(state.providers || [])
             .map(
@@ -3795,9 +3796,18 @@ function openListPicker(listId) {
           let processed = 0;
           let found = 0;
           let round = 0;
+          const bfPaint = (done, remain) => {
+            const box = $('#backfillBox');
+            if (!box) return;
+            const tot = done + (remain || 0);
+            const pct = tot ? Math.min(100, Math.round((done / tot) * 100)) : 0;
+            box.innerHTML = `<div style="height:8px;border-radius:5px;background:var(--bg-soft);overflow:hidden;margin-bottom:5px">
+                <div style="height:100%;width:${pct}%;background:var(--brand);transition:width .25s"></div></div>
+              <div><b style="color:var(--brand)">${pct}%</b> · 已处理 ${done} · 剩余 ${remain == null ? '?' : remain} · 找到合集 ${found}</div>`;
+          };
           try {
             for (; round < 300; round += 1) {
-              el.textContent = `补全中… 已处理 ${processed}`;
+              el.textContent = '补全中…';
               const res = await api('/api/movies/collections-backfill', { method: 'POST', body: { limit: 8 } });
               if (res.error) {
                 toast(res.error, 'err');
@@ -3805,6 +3815,7 @@ function openListPicker(listId) {
               }
               processed += res.processed || 0;
               found += res.found || 0;
+              bfPaint(processed, res.remaining);
               if (!res.remaining || !res.processed) {
                 toast(`合集补全完成：处理 ${processed} 部，找到合集 ${found} 部`);
                 break;
@@ -3816,6 +3827,7 @@ function openListPicker(listId) {
           } finally {
             el.disabled = false;
             el.textContent = label0;
+            bfPaint(processed, 0);
           }
         } else if (action === 'douban-preview' || action === 'douban-sync-pick' || action === 'douban-sync-auto') {
           const kind = el.dataset.kind === 'book' ? 'book' : 'movie';
@@ -3867,10 +3879,41 @@ function openListPicker(listId) {
               let updated = 0;
               let round = 0;
               let cursors = null;
+              const logLines = [];
+              let lastRes = null;
+              const paint = (res, extra) => {
+                if (!box) return;
+                if (res) lastRes = res;
+                const r = lastRes || {};
+                if (extra) logLines.push(extra);
+                const labelOf = (k) =>
+                  kind === 'book'
+                    ? { collect: '想读', doing: '在读', done: '读过' }[k]
+                    : { collect: '想看', doing: '在看', done: '看过' }[k];
+                let tot = 0;
+                let done = 0;
+                for (const [k, v] of Object.entries(r.byStatus || {})) tot += v.total || 0;
+                for (const k of statuses) {
+                  const t = ((r.byStatus || {})[labelOf(k)] || {}).total || 0;
+                  done += Math.min(((r.cursors || {})[k] || 0), t);
+                }
+                const pct = tot ? Math.min(100, Math.round((done / tot) * 100)) : 0;
+                box.innerHTML = `
+                  <div style="height:8px;border-radius:5px;background:var(--bg-soft);overflow:hidden;margin-bottom:6px">
+                    <div style="height:100%;width:${pct}%;background:var(--brand);transition:width .25s"></div>
+                  </div>
+                  <div style="margin-bottom:6px">
+                    <b style="color:var(--brand)">${pct}%</b> · 已扫描 ${done}/${tot || '?'} · 新增 ${added}${
+                  r.allDone ? ' · <b>已到列表末尾</b>' : ''
+                }
+                  </div>
+                  <div style="max-height:150px;overflow:auto;line-height:1.6">${logLines
+                    .slice(-40)
+                    .map((x) => `<div>${x}</div>`)
+                    .join('')}</div>`;
+              };
               for (; round < 60; round += 1) {
-                if (box)
-                box.innerHTML = `自动分批：第 ${round + 1} 批进行中…（已新增 ${added}）
-                  <br><span style="color:var(--text-mute)">每批只翻几页（约几秒），用游标一路走到列表末尾；云端有 Cloudflare 100 秒超时，这样才稳</span>`;
+                paint(null, `第 ${round + 1} 批 进行中…`);
                 const res = await api('/api/douban/sync', {
                   method: 'POST',
                   body: { kind, statuses, updateExisting: update, perStatus: 200, maxPages: 3, cursors },
@@ -3878,19 +3921,18 @@ function openListPicker(listId) {
                 added += res.added || 0;
                 updated += res.updated || 0;
                 cursors = res.cursors || null;
-                render(res);
-                if (box)
-                  box.innerHTML += `<div style="margin-top:6px">第 ${round + 1} 批：新增 ${res.added || 0} · 跳过已入库 ${
-                    res.skippedKnown || 0
-                  }（累计新增 ${added}）${res.allDone ? ' · 已到列表末尾' : ''}</div>`;
-                // 只有翻到列表末尾（allDone）或真报错才停；
-                // "这一批没新增"很常见（开头几页都已入库），要继续用游标往后走
+                logLines.pop();
+                const rows = Object.entries(res.byStatus || {})
+                  .map(
+                    ([name, v]) =>
+                      `${name} 豆瓣侧 ${v.total} · 本批扫描 ${v['抓取']}${v['略过已入库'] ? ` · 已入库 ${v['略过已入库']}` : ''}`
+                  )
+                  .join(' ｜ ');
+                paint(res, `第 ${round + 1} 批：新增 ${res.added || 0} · 跳过已入库 ${res.skippedKnown || 0}（累计 ${added}）<span style="color:var(--text-mute)"> ${rows}</span>`);
                 if (res.allDone || res.error) break;
-                if (res.fetched === 0 && res.skippedKnown === 0 && !res.cursors) break; // 防止死循环
+                if (res.fetched === 0 && res.skippedKnown === 0 && !res.cursors) break;
                 await refresh();
               }
-              if (box)
-                box.innerHTML += `<div style="margin-top:6px"><b>自动分批结束</b>：共 ${round + 1} 批 · 新增 ${added} · 更新 ${updated}</div>`;
               toast(`自动分批完成：新增 ${added}`);
               await refresh();
             }
