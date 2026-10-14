@@ -3842,12 +3842,14 @@ function openListPicker(listId) {
           };
           try {
             if (action === 'douban-preview') {
-              const res = await api('/api/douban/sync', { method: 'POST', body: { kind, dryRun: true, statuses, perStatus: 30 } });
+              const res = await api('/api/douban/sync', { method: 'POST', body: { kind, dryRun: true, statuses, perStatus: 200, maxPages: 10 } });
               render(res);
               if (box)
                 box.innerHTML += `<div style="margin-top:6px">👉 本次会新增 <b style="color:var(--brand)">${
                   res.wouldAdd || 0
-                }</b> 条（抽样每状态 30 条：扫描 ${res.scanned || 0}，略过已入库 ${res.skippedKnown || 0}）${
+                }</b> 条（本次抽样每状态最多 200 条：扫描 ${res.scanned || 0}，其中已入库 ${res.skippedKnown || 0}）${
+                  res.allDone ? '' : '<br><span style="color:var(--text-mute)">列表很长、本次只扫了最前面一段；真正的全量同步请用「自动分批同步」（会一路翻到末尾）</span>'
+                }${
                   res.message ? `<br>${res.message}` : ''
                 }</div>`;
               toast(`预览：会新增 ${res.wouldAdd || 0} 条`);
@@ -3878,10 +3880,13 @@ function openListPicker(listId) {
                 cursors = res.cursors || null;
                 render(res);
                 if (box)
-                  box.innerHTML += `<div style="margin-top:6px">第 ${round + 1} 批：新增 ${res.added || 0}（累计 ${added}）${
-                    res.allDone ? ' · 已到列表末尾' : ''
-                  }</div>`;
-                if (res.message || res.allDone) break;
+                  box.innerHTML += `<div style="margin-top:6px">第 ${round + 1} 批：新增 ${res.added || 0} · 跳过已入库 ${
+                    res.skippedKnown || 0
+                  }（累计新增 ${added}）${res.allDone ? ' · 已到列表末尾' : ''}</div>`;
+                // 只有翻到列表末尾（allDone）或真报错才停；
+                // "这一批没新增"很常见（开头几页都已入库），要继续用游标往后走
+                if (res.allDone || res.error) break;
+                if (res.fetched === 0 && res.skippedKnown === 0 && !res.cursors) break; // 防止死循环
                 await refresh();
               }
               if (box)

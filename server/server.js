@@ -945,18 +945,27 @@ async function handleApi(req, res, url) {
       });
     }
     if (!data.items.length) {
+      // 注意：这一批"没有新条目"很常见（列表开头都已入库），
+      // 只要还没翻到列表末尾就不能当成失败，前端要靠 cursors 继续往后走
       return sendJson(res, 200, {
         ok: true,
         kind,
         uid,
         summary: data.summary,
+        byStatus: data.byStatus,
+        cursors: data.cursors,
+        allDone: data.allDone,
+        total: data.total,
         scanned: data.scanned,
         skippedKnown: data.skippedKnown,
+        fetched: 0,
         added: 0,
         updated: 0,
         skipped: 0,
         failed: 0,
-        message: '没有读到任何记录：Cookie 可能已过期，或该账号在这类目下没有收藏',
+        message: data.allDone
+          ? '已翻到列表末尾，没有更多条目：Cookie 可能已过期，或该账号在这类目下没有新收藏'
+          : '',
       });
     }
     const norm = (s2) => String(s2 || '').toLowerCase().replace(/[\s\-_:：·,，.。()（）\[\]【】《》]/g, '');
