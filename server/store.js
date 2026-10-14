@@ -68,6 +68,37 @@ function seedDb() {
  *  这里统一迁移成 ASCII id，并同步更新书籍上的引用。 */
 const SAFE_ID_RE = /^[A-Za-z0-9_-]+$/;
 
+/** 修复导入造成的"分类/标签 id 失配"：id 里带中文名的旧格式可按名字找回 */
+function repairDanglingRefs() {
+  const d = getDb();
+  let fixedCat = 0;
+  let fixedTag = 0;
+  for (const b of d.books || []) {
+    if (b.categoryId && !d.categories.some((c) => c.id === b.categoryId)) {
+      const hit = legacyLookup('cat', b.categoryId) || findCategoryByName(String(b.categoryId).replace(/^c_\d+_/, ''));
+      b.categoryId = hit ? hit.id : '';
+      if (hit) fixedCat += 1;
+    }
+    if (Array.isArray(b.tagIds)) {
+      const mapped = b.tagIds
+        .map((id) => (d.tags.some((t) => t.id === id) ? id : (legacyLookup('tag', id) || {}).id || ''))
+        .filter(Boolean);
+      if (mapped.length !== b.tagIds.length) fixedTag += b.tagIds.length - mapped.length;
+      b.tagIds = mapped;
+    }
+  }
+  for (const m of d.movies || []) {
+    if (m.collection && m.collection.id && !d.movies.some((x) => (x.collection || {}).id === m.collection.id && x.id !== m.id)) {
+      // 合集 id 失配不属于此处处理
+    }
+  }
+  if (fixedCat || fixedTag) {
+    save(true);
+    console.log(`[store] 已修复引用：分类 ${fixedCat} 条、标签 ${fixedTag} 个`);
+  }
+  return { fixedCat, fixedTag };
+}
+
 function migrateIds() {
   const d = db;
   const map = new Map();
@@ -121,6 +152,7 @@ function load() {
   }
   db = seedDb();
   migrateIds();
+  repairDanglingRefs();
   writeNow();
   return db;
 }
@@ -436,6 +468,28 @@ function wipe() {
 }
 
 /** 按推荐分类给"未分类"的书套用真实分类，返回更新数量 */
+/** 给单本书套用自动分类（同步导入时用） */
+function autoCategorizeOne(bookId) {
+  const d = getDb();
+  const book = d.books.find((b) => b.id === bookId);
+  if (!book || book.categoryId) return null;
+  const cat = autoCategorize(book);
+  const name = (cat && cat.name) || book.autoCategoryName || '未分类';
+  let hit = d.categories.find((c) => c.name === name);
+  if (!hit) {
+    hit = { id: uid('c_'), name, color: (cat && cat.color) || UNCATEGORIZED.color, builtin: false, createdAt: nowIso() };
+    d.categories.push(hit);
+  }
+  book.categoryId = hit.id;
+  if (cat) {
+    book.autoCategoryName = cat.name;
+    book.autoCategoryColor = cat.color;
+  }
+  book.updatedAt = nowIso();
+  save(true);
+  return hit;
+}
+
 function autoCategorizeAll(overwrite = false) {
   const d = getDb();
   let updated = 0;
@@ -1309,6 +1363,7 @@ module.exports = {
   bulkDeleteBooks,
   wipe,
   autoCategorizeAll,
+  autoCategorizeOne,
   localizeCover,
   cachedImage,
   isAllowedImageUrl,

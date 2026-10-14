@@ -892,7 +892,7 @@ async function handleApi(req, res, url) {
             } else skipped += 1;
             continue;
           }
-          store.addBook({
+          const created = store.addBook({
             title: item.title,
             authors: item.authors || [],
             publisher: item.publisher || '',
@@ -908,6 +908,12 @@ async function handleApi(req, res, url) {
             sourceId: item.doubanId,
             sourceUrl: `https://book.douban.com/subject/${item.doubanId}/`,
           });
+          // 豆瓣收藏里没有分类信息，这里按本机关键词规则先自动归一个类
+          try {
+            if (typeof store.autoCategorizeOne === 'function') store.autoCategorizeOne(created.id);
+          } catch (err) {
+            /* 忽略 */
+          }
           added += 1;
         } else {
           const existing =
