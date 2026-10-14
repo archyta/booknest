@@ -2595,6 +2595,12 @@ function openListPicker(listId) {
     });
 
     $('#movieSheetBody').addEventListener('click', async (e) => {
+      // 点海报放大（与书籍详情一致）
+      const zoomEl = e.target.closest('[data-act="zoom-cover"]');
+      if (zoomEl && zoomEl.dataset.src) {
+        openLightbox(zoomEl.dataset.src);
+        return;
+      }
       const d = state.movieDraft;
       if (!d) return;
       const sim = e.target.closest('[data-movie]:not([data-movie-add])');
