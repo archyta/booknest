@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const store = require('./store');
 const providers = require('./providers');
 const movie = require('./providers/movie');
+const doubanUser = require('./providers/douban-user');
 const ocr = require('./ocr');
 const auth = require('./auth');
 const isbnUtil = require('./isbn');
@@ -829,6 +830,132 @@ async function handleApi(req, res, url) {
       store.deleteMovie(id);
       return sendJson(res, 200, { ok: true });
     }
+  }
+
+  /** 豆瓣个人收藏同步（读书 / 影视） */
+  if (p === '/api/douban/sync' && req.method === 'POST') {
+    const body = await readBody(req);
+    const cookie = doubanCookie();
+    if (!cookie) return sendJson(res, 400, { error: '请先在「设置 → 影片数据源」填写豆瓣 Cookie' });
+    const uid = doubanUser.parseUserId(cookie);
+    if (!uid) return sendJson(res, 400, { error: 'Cookie 里没找到 dbcl2，请把浏览器里的整条 Cookie 复制过来' });
+    const kind = body.kind === 'book' ? 'book' : 'movie';
+    const norm0 = (s2) => String(s2 || '').toLowerCase().replace(/[\s\-_:：·,，.。()（）\[\]【】《》]/g, '');
+    // 已入库的判断给到抓取层：长的收藏列表可以边翻页边跳过，多次同步能逐步推进
+    const known = (item) =>
+      kind === 'book'
+        ? !!(store.findBookByIsbn('') && false) ||
+          store.listBooks().some(
+            (b) => (b.source === 'douban' && String(b.sourceId) === item.doubanId) || norm0(b.title) === norm0(item.title)
+          )
+        : store.listMovies().some(
+            (m) =>
+              (m.source === 'douban' && String(m.sourceId) === item.doubanId) ||
+              (norm0(m.title) === norm0(item.title) && String(m.year || '') === String(item.year || ''))
+          );
+    let data;
+    try {
+      data = await doubanUser.fetchAll({ cookie, uid, kind, known });
+    } catch (err) {
+      return sendJson(res, 502, { error: err.message || '豆瓣接口请求失败' });
+    }
+    if (!data.items.length) {
+      return sendJson(res, 200, {
+        ok: true,
+        kind,
+        uid,
+        summary: data.summary,
+        scanned: data.scanned,
+        skippedKnown: data.skippedKnown,
+        added: 0,
+        updated: 0,
+        skipped: 0,
+        failed: 0,
+        message: '没有读到任何记录：Cookie 可能已过期，或该账号在这类目下没有收藏',
+      });
+    }
+    const norm = (s2) => String(s2 || '').toLowerCase().replace(/[\s\-_:：·,，.。()（）\[\]【】《》]/g, '');
+    let added = 0;
+    let updated = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (const item of data.items) {
+      try {
+        if (kind === 'book') {
+          const existing =
+            store.listBooks().find((b) => b.source === 'douban' && String(b.sourceId) === item.doubanId) ||
+            store.listBooks().find((b) => norm(b.title) === norm(item.title));
+          if (existing) {
+            if (body.updateExisting && item.status && existing.status !== item.status) {
+              store.updateBook(existing.id, { status: item.status });
+              updated += 1;
+            } else skipped += 1;
+            continue;
+          }
+          store.addBook({
+            title: item.title,
+            authors: item.authors || [],
+            publisher: item.publisher || '',
+            pubdate: item.pubdate || '',
+            price: item.price || '',
+            coverRemote: item.coverRemote || '',
+            rating: item.rating || 0,
+            ratingCount: item.ratingCount || 0,
+            myRating: item.myRating || 0,
+            note: item.note || '',
+            status: item.status,
+            source: 'douban',
+            sourceId: item.doubanId,
+            sourceUrl: `https://book.douban.com/subject/${item.doubanId}/`,
+          });
+          added += 1;
+        } else {
+          const existing =
+            store.findMovieBySource('douban', item.doubanId) ||
+            store.listMovies().find((m) => norm(m.title) === norm(item.title) && String(m.year || '') === String(item.year || ''));
+          if (existing) {
+            if (body.updateExisting && item.status && existing.status !== item.status) {
+              store.updateMovie(existing.id, { status: item.status });
+              updated += 1;
+            } else skipped += 1;
+            continue;
+          }
+          store.addMovie({
+            title: item.title,
+            year: item.year || '',
+            type: item.type || 'movie',
+            genres: item.genres || [],
+            posterRemote: item.posterRemote || '',
+            rating: item.rating || 0,
+            ratingCount: item.ratingCount || 0,
+            myRating: item.myRating || 0,
+            note: item.note || '',
+            status: item.status,
+            source: 'douban',
+            sourceId: item.doubanId,
+            sourceUrl: `https://movie.douban.com/subject/${item.doubanId}/`,
+          });
+          added += 1;
+        }
+      } catch (err) {
+        failed += 1;
+      }
+    }
+    return sendJson(res, 200, {
+      ok: true,
+      kind,
+      uid,
+      summary: data.summary,
+      total: data.total,
+      scanned: data.scanned,
+      skippedKnown: data.skippedKnown,
+      fetched: data.items.length,
+      capped: data.items.length >= data.max,
+      added,
+      updated,
+      skipped,
+      failed,
+    });
   }
 
   /** 只刷新剧集的"季"信息（单次 TMDb 请求，不动标题/评分等其它字段） */

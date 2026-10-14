@@ -2191,6 +2191,28 @@ function openListPicker(listId) {
         </div>
       </div>
       <div class="section">
+        <div class="section-head"><h3>豆瓣同步</h3></div>
+        <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-bottom:8px">
+          用上面填的豆瓣 Cookie，把你豆瓣上的<b>想读 / 在读 / 读过</b>和<b>想看 / 在看 / 看过</b>同步进来。
+          按豆瓣条目 id 或片名去重，<b>只新增、不动你已有的记录</b>；勾选下面的选项才会更新已有条目的状态。
+          封面先用豆瓣图床地址（经本机代理显示），不占用磁盘。
+        </div>
+        <label class="row" style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);margin-bottom:8px">
+          <input type="checkbox" id="syncUpdateExisting" ${state.settings.syncUpdateExisting ? 'checked' : ''}>
+          同时更新已有条目的状态
+        </label>
+        <div class="btn-row">
+          <button class="btn ghost sm" data-action="douban-sync-book" ${state.settings.doubanCookieSet ? '' : 'disabled'}>同步豆瓣读书</button>
+          <button class="btn ghost sm" data-action="douban-sync-movie" ${state.settings.doubanCookieSet ? '' : 'disabled'}>同步豆瓣影视</button>
+        </div>
+        ${
+          state.settings.doubanCookieSet
+            ? ''
+            : '<div class="hint" style="font-size:11.5px;color:#f59e0b;margin-top:6px">需要先在上面填写「豆瓣 Cookie」才能同步</div>'
+        }
+        <div id="doubanSyncResult" style="font-size:12px;color:var(--text-mute);margin-top:8px"></div>
+      </div>
+      <div class="section">
         <div class="section-head"><h3>影片数据源</h3><button class="btn sm ghost" data-action="check-movie-providers">重新检测</button></div>
         <div class="src-list">
           ${
@@ -3637,7 +3659,46 @@ function openListPicker(listId) {
       if (!el) return;
       const action = el.dataset.action;
       try {
-        if (action === 'open-manage') {
+        if (action === 'douban-sync-book' || action === 'douban-sync-movie') {
+          const kind = action === 'douban-sync-book' ? 'book' : 'movie';
+          const box = $('#doubanSyncResult');
+          const update = !!($('#syncUpdateExisting') || {}).checked;
+          try {
+            await api('/api/settings', { method: 'PATCH', body: { syncUpdateExisting: update } });
+            state.settings.syncUpdateExisting = update;
+          } catch (err) {
+            /* 忽略 */
+          }
+          const label0 = action.textContent;
+          action.disabled = true;
+          action.textContent = '同步中…';
+          if (box) box.textContent = `正在读取豆瓣${kind === 'book' ? '读书' : '影视'}记录（分页抓取，请稍候）…`;
+          try {
+            const res = await api('/api/douban/sync', { method: 'POST', body: { kind, updateExisting: update } });
+            const parts = [
+              `豆瓣侧：${Object.entries(res.summary || {})
+                .map(([k, v]) => `${k} ${v}`)
+                .join(' / ')}`,
+              `本次读取 ${res.fetched || 0} 条新记录${res.capped ? '（达到单次上限）' : ''}`,
+              res.skippedKnown ? `扫描中略过已入库 ${res.skippedKnown} 条` : '',
+              `新增 ${res.added || 0}`,
+              `更新 ${res.updated || 0}`,
+              `已存在跳过 ${res.skipped || 0}`,
+            ];
+            if (res.failed) parts.push(`失败 ${res.failed}`);
+            const msg = res.message || parts.join(' · ');
+            if (box) box.textContent = msg;
+            toast(res.message ? '没有读到记录' : `同步完成：新增 ${res.added}，更新 ${res.updated}`, res.message ? 'err' : undefined);
+            await refresh();
+            renderSettings();
+          } catch (err) {
+            if (box) box.textContent = `同步失败：${err.message}`;
+            toast(`同步失败：${err.message}`, 'err');
+          } finally {
+            action.disabled = false;
+            action.textContent = label0;
+          }
+        } else if (action === 'open-manage') {
           renderManage();
           openSheet('#sheetManage');
         } else if (action === 'check-movie-providers') {
