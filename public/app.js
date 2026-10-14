@@ -49,6 +49,7 @@
     movieCollection: null,
     person: null,
     doubanPending: [],
+    pushRun: null,
     seriesPick: null,
     movieListPick: null,
     movieCurrentListId: '',
@@ -2094,6 +2095,18 @@ function openListPicker(listId) {
 
   /* ---------------- 设置 ---------------- */
 
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    const run = state.pushRun;
+    if (!run || !run.active) return;
+    const btn = $('#pushRunDone');
+    if (btn && run.opened) {
+      btn.classList.add('primary');
+      btn.classList.remove('ghost');
+      btn.textContent = '② 已同步，下一条 ← 点这里';
+    }
+  });
+
   function renderSettings() {
     setTimeout(loadDoubanPending, 0);
     const srv = state.server || {};
@@ -2344,6 +2357,7 @@ function openListPicker(listId) {
         else if (sheetId === 'sheetMovieListPick') state.movieListPick = null;
         else if (sheetId === 'sheetPerson') state.person = null;
         else if (sheetId === 'sheetSeries') state.seriesPick = null;
+        else if (sheetId === 'sheetPush') state.pushRun = null;
       })
     );
 
@@ -2880,8 +2894,41 @@ function openListPicker(listId) {
         toast('已标记为已同步');
         return;
       }
+      const runBtn = e.target.closest('[data-push-run]');
+      if (runBtn) {
+        const run = state.pushRun;
+        if (!run) return;
+        const op = runBtn.dataset.pushRun;
+        const it = run.items[run.idx];
+        if (op === 'open' && it) {
+          window.open(it.url, '_blank', 'noopener');
+          run.opened = true;
+          renderPushRun();
+        } else if (op === 'done' && it) {
+          run.done += 1;
+          run.opened = false;
+          run.idx += 1;
+          await api('/api/douban/pending/clear', { method: 'POST', body: { items: [{ kind: it.kind, id: it.id }] } });
+          await loadDoubanPending();
+          renderPushRun();
+        } else if (op === 'skip') {
+          run.skipped += 1;
+          run.opened = false;
+          run.idx += 1;
+          renderPushRun();
+        } else if (op === 'stop') {
+          state.pushRun = null;
+          renderPushSheet();
+        }
+        return;
+      }
       const act = e.target.closest('[data-push]');
       if (!act) return;
+      if (act.dataset.push === 'run') {
+        state.pushRun = { active: true, idx: 0, done: 0, skipped: 0, opened: false, items: (state.doubanPending || []).slice() };
+        renderPushRun();
+        return;
+      }
       if (act.dataset.push === 'all') {
         const res = await api('/api/douban/pending/clear', { method: 'POST', body: { all: true } });
         await loadDoubanPending();
@@ -4804,10 +4851,63 @@ function openListPicker(listId) {
       .join('\n');
   }
 
+  /** 连续处理：一次一条，开豆瓣 → 回来点"已同步，下一条" */
+  function renderPushRun() {
+    const run = state.pushRun;
+    const body = $('#pushBody');
+    if (!body || !run) return;
+    const total = run.items.length;
+    if (run.idx >= total) {
+      body.innerHTML = `<div class="center" style="padding:30px 0">
+        <div style="font-size:40px">🎉</div>
+        <div style="margin:10px 0 4px;font-size:15px;font-weight:600">这一批处理完了</div>
+        <div style="color:var(--text-mute);font-size:12.5px">共处理 ${total} 条 · 跳过 ${run.skipped} 条 · 已同步 ${run.done} 条</div>
+        <div class="btn-row" style="margin-top:14px"><button class="btn" data-push-run="stop">返回清单</button></div>
+      </div>`;
+      return;
+    }
+    const it = run.items[run.idx];
+    body.innerHTML = `
+      <div class="hint" style="font-size:12px;color:var(--text-mute);margin-bottom:10px">
+        连续处理 ${run.idx + 1}/${total} · 已同步 ${run.done} · 跳过 ${run.skipped}
+        <div style="height:5px;border-radius:3px;background:var(--bg-soft);margin-top:6px;overflow:hidden">
+          <div style="height:100%;width:${Math.round(((run.idx) / total) * 100)}%;background:var(--brand)"></div></div>
+      </div>
+      <div class="person-work" style="border:1px solid var(--line);border-radius:12px;padding:12px;align-items:flex-start">
+        <div class="poster" style="width:64px;height:94px">${
+          it.cover
+            ? `<img loading="lazy" src="${esc(/^https?:/.test(it.cover) ? `/api/cover?src=${encodeURIComponent(it.cover)}` : it.cover)}" alt="">`
+            : it.kind === 'book'
+            ? '📖'
+            : '🎬'
+        }</div>
+        <div class="info">
+          <div class="t" style="font-size:15px">${esc(it.title)}</div>
+          <div class="s" style="margin-top:4px">${esc(it.subtitle || '')}</div>
+          <div class="s" style="margin-top:4px">本地已标记为 <b style="color:var(--brand)">${esc(it.statusLabel)}</b>${
+            it.myRating ? ` · 我的评分 <b style="color:var(--brand)">${it.myRating} 星</b>` : ''
+          }</div>
+          <div class="s" style="margin-top:4px;color:var(--text-mute)">去豆瓣按同样的状态/评分标记即可</div>
+        </div>
+      </div>
+      <div class="btn-row" style="margin-top:12px;flex-direction:column;gap:8px">
+        <button class="btn" data-push-run="open" style="width:100%">① 打开豆瓣条目 ↗</button>
+        <button class="btn ${run.opened ? 'primary' : 'ghost'}" data-push-run="done" id="pushRunDone" style="width:100%">② 已同步，下一条</button>
+        <div style="display:flex;gap:8px;width:100%">
+          <button class="btn ghost" data-push-run="skip" style="flex:1">跳过这条</button>
+          <button class="btn ghost" data-push-run="stop" style="flex:1">退出连续模式</button>
+        </div>
+      </div>
+      <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-top:10px">
+        在豆瓣点完「看过/想看」后回到这里点第 ② 步即可，这条会从待推送清单出队。
+      </div>`;
+  }
+
   function renderPushSheet() {
     const list = state.doubanPending || [];
     const body = $('#pushBody');
     if (!body) return;
+    if (state.pushRun && state.pushRun.active) return renderPushRun();
     body.innerHTML = list.length
       ? `${list
           .map(
@@ -4832,7 +4932,7 @@ function openListPicker(listId) {
           .join('')}
         <div class="sticky-bar">
           <button class="btn ghost" data-push="copy">复制清单</button>
-          <button class="btn" data-push="all">全部标记已同步</button>
+          <button class="btn" data-push="run">▶ 连续处理（${list.length}）</button>
         </div>`
       : '<div class="center">没有待推送的条目</div>';
   }
