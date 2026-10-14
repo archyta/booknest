@@ -906,6 +906,8 @@ async function handleApi(req, res, url) {
     const dryRun = body.dryRun === true; // 预览：只统计，不写库
     const only = Array.isArray(body.statuses) && body.statuses.length ? body.statuses : null; // 只同步选中的状态
     const perStatus = Number(body.perStatus) > 0 ? Number(body.perStatus) : undefined; // 每个状态每批最多抓多少
+    const cursors = body.cursors && typeof body.cursors === 'object' ? body.cursors : null; // 各状态翻页游标
+    const maxPages = Number(body.maxPages) > 0 ? Number(body.maxPages) : 3; // 单次请求每状态最多翻几页（控时）
     const norm0 = (s2) => String(s2 || '').toLowerCase().replace(/[\s\-_:：·,，.。()（）\[\]【】《》]/g, '');
     // 已入库的判断给到抓取层：长的收藏列表可以边翻页边跳过，多次同步能逐步推进
     const known = (item) =>
@@ -921,7 +923,7 @@ async function handleApi(req, res, url) {
           );
     let data;
     try {
-      data = await doubanUser.fetchAll({ cookie, uid, kind, known, only, maxPerStatus: perStatus });
+      data = await doubanUser.fetchAll({ cookie, uid, kind, known, only, maxPerStatus: perStatus, cursors, maxPages });
     } catch (err) {
       return sendJson(res, 502, { error: err.message || '豆瓣接口请求失败' });
     }
@@ -933,6 +935,8 @@ async function handleApi(req, res, url) {
         dryRun: true,
         summary: data.summary,
         byStatus: data.byStatus,
+        cursors: data.cursors,
+        allDone: data.allDone,
         total: data.total,
         wouldAdd: data.items.length,
         scanned: data.scanned,
@@ -1037,6 +1041,8 @@ async function handleApi(req, res, url) {
       uid,
       summary: data.summary,
       byStatus: data.byStatus,
+      cursors: data.cursors,
+      allDone: data.allDone,
       total: data.total,
       scanned: data.scanned,
       skippedKnown: data.skippedKnown,

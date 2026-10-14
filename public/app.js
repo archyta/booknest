@@ -3813,17 +3813,17 @@ function openListPicker(listId) {
           };
           try {
             if (action === 'douban-preview') {
-              const res = await api('/api/douban/sync', { method: 'POST', body: { kind, dryRun: true, statuses, perStatus: 200 } });
+              const res = await api('/api/douban/sync', { method: 'POST', body: { kind, dryRun: true, statuses, perStatus: 30 } });
               render(res);
               if (box)
                 box.innerHTML += `<div style="margin-top:6px">👉 本次会新增 <b style="color:var(--brand)">${
                   res.wouldAdd || 0
-                }</b> 条（扫描 ${res.scanned || 0}，略过已入库 ${res.skippedKnown || 0}）${
+                }</b> 条（抽样每状态 30 条：扫描 ${res.scanned || 0}，略过已入库 ${res.skippedKnown || 0}）${
                   res.message ? `<br>${res.message}` : ''
                 }</div>`;
               toast(`预览：会新增 ${res.wouldAdd || 0} 条`);
             } else if (action === 'douban-sync-pick') {
-              const res = await api('/api/douban/sync', { method: 'POST', body: { kind, statuses, updateExisting: update, perStatus: 200 } });
+              const res = await api('/api/douban/sync', { method: 'POST', body: { kind, statuses, updateExisting: update, perStatus: 60 } });
               render(res);
               if (box)
                 box.innerHTML += `<div style="margin-top:6px">新增 ${res.added || 0} · 更新 ${res.updated || 0} · 已存在跳过 ${
@@ -3835,17 +3835,24 @@ function openListPicker(listId) {
               let added = 0;
               let updated = 0;
               let round = 0;
-              for (; round < 8; round += 1) {
-                if (box) box.innerHTML = `自动分批：第 ${round + 1} 批进行中…（已新增 ${added}）`;
+              let cursors = null;
+              for (; round < 60; round += 1) {
+                if (box)
+                box.innerHTML = `自动分批：第 ${round + 1} 批进行中…（已新增 ${added}）
+                  <br><span style="color:var(--text-mute)">每批只翻几页（约几秒），用游标一路走到列表末尾；云端有 Cloudflare 100 秒超时，这样才稳</span>`;
                 const res = await api('/api/douban/sync', {
                   method: 'POST',
-                  body: { kind, statuses, updateExisting: update, perStatus: 100 },
+                  body: { kind, statuses, updateExisting: update, perStatus: 200, maxPages: 3, cursors },
                 });
                 added += res.added || 0;
                 updated += res.updated || 0;
+                cursors = res.cursors || null;
                 render(res);
-                if (box) box.innerHTML += `<div style="margin-top:6px">第 ${round + 1} 批：新增 ${res.added || 0}（累计 ${added}）</div>`;
-                if (res.message || !res.fetched) break;
+                if (box)
+                  box.innerHTML += `<div style="margin-top:6px">第 ${round + 1} 批：新增 ${res.added || 0}（累计 ${added}）${
+                    res.allDone ? ' · 已到列表末尾' : ''
+                  }</div>`;
+                if (res.message || res.allDone) break;
                 await refresh();
               }
               if (box)

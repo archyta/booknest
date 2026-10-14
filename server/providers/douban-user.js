@@ -121,13 +121,16 @@ function normalizeItem(raw, kind) {
  * known(item) 返回 true 的条目会被跳过但仍继续翻页——这样超过单次上限的长列表
  * （例如豆瓣"想看"上千条）每同步一次都能往后推进，而不是反复读前 N 条。
  */
-async function fetchStatus({ cookie, uid, kind, status, budget, known }) {
+async function fetchStatus({ cookie, uid, kind, status, budget, known, start: startAt, maxPages }) {
   const out = [];
-  let start = 0;
+  let start = Math.max(0, Number(startAt) || 0);
   let total = null;
   let scanned = 0;
   let skippedKnown = 0;
-  while (out.length < budget) {
+  const pages = Math.max(1, Number(maxPages) || 3); // 单次请求最多翻几页（控制耗时）
+  let used = 0;
+  while (out.length < budget && used < pages) {
+    used += 1;
     const url = `${BASE}/rexxar/api/v2/user/${encodeURIComponent(uid)}/interests?type=${
       kind === 'book' ? 'book' : 'movie'
     }&status=${encodeURIComponent(status)}&start=${start}&count=${PAGE}`;
@@ -148,7 +151,7 @@ async function fetchStatus({ cookie, uid, kind, status, budget, known }) {
     const firstStatus = head[0];
     if (head.length && head.every((x) => knownStatuses.includes(x) && x !== status)) {
       // 例如请求 doing（在看）却返回 collect（想看）→ 说明该键名被忽略
-      return { items: [], total: 0, scanned: 0, skippedKnown: 0, invalidKey: true, actualStatus: firstStatus };
+      return { items: [], total: 0, scanned: 0, skippedKnown: 0, nextStart: start, invalidKey: true, actualStatus: firstStatus };
     }
     for (const raw of items) {
       const norm = normalizeItem(raw, kind);
@@ -167,23 +170,37 @@ async function fetchStatus({ cookie, uid, kind, status, budget, known }) {
     if (out.length >= budget) break;
     await sleep(1100); // 豆瓣限速
   }
-  return { items: out, total: total || 0, scanned, skippedKnown };
+  return { items: out, total: total || 0, scanned, skippedKnown, nextStart: start, done: total != null && start >= total };
 }
 
 /** 拉某类（book/movie）的全部收藏状态 */
-async function fetchAll({ cookie, uid, kind, known, maxPerStatus, only }) {
+async function fetchAll({ cookie, uid, kind, known, maxPerStatus, only, cursors, maxPages }) {
   // only：只要这些豆瓣状态（collect/doing/done），不传则全部
   const statuses = Array.isArray(only) && only.length ? STATUS_KEYS[kind].filter((x) => only.includes(x)) : STATUS_KEYS[kind];
   const perStatus = Number(maxPerStatus) > 0 ? Number(maxPerStatus) : MAX_PER_STATUS;
   const items = [];
   const summary = {};
   const byStatus = {};
+  const nextCursors = {};
   let total = 0;
   let scanned = 0;
   let skippedKnown = 0;
+  let allDone = true;
+  const cursorIn = cursors && typeof cursors === 'object' ? cursors : {};
   for (const status of statuses) {
-    // 每个状态各自配额：想看上干条也不会挤掉看过/在看
-    const res = await fetchStatus({ cookie, uid, kind, status, budget: perStatus, known });
+    // 每个状态各自配额 + 游标：单次只翻几页，下次从 nextStart 接着走
+    const res = await fetchStatus({
+      cookie,
+      uid,
+      kind,
+      status,
+      budget: perStatus,
+      known,
+      start: cursorIn[status],
+      maxPages,
+    });
+    nextCursors[status] = res.nextStart || 0;
+    if (!res.done) allDone = false;
     items.push(...res.items);
     summary[STATUS_LABEL[kind][status]] = res.total;
     byStatus[STATUS_LABEL[kind][status]] = { total: res.total, 抓取: res.items.length, 略过已入库: res.skippedKnown || 0, 键名无效: !!res.invalidKey };
@@ -191,7 +208,7 @@ async function fetchAll({ cookie, uid, kind, known, maxPerStatus, only }) {
     scanned += res.scanned || 0;
     skippedKnown += res.skippedKnown || 0;
   }
-  return { items, summary, byStatus, total, max: perStatus, scanned, skippedKnown };
+  return { items, summary, byStatus, cursors: nextCursors, allDone, total, max: perStatus, scanned, skippedKnown };
 }
 
 module.exports = { parseUserId, fetchAll, fetchStatus, normalizeItem, STATUS_MAP, STATUS_LABEL, STATUS_KEYS };
