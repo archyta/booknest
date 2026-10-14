@@ -48,6 +48,7 @@
     movieSources: [],
     movieCollection: null,
     person: null,
+    shelfLimit: 60,
     doubanPending: [],
     pushRun: null,
     seriesPick: null,
@@ -4219,12 +4220,37 @@ function openListPicker(listId) {
     }
   }
 
-  function posterSrc(m) {
-    if (!m) return '';
-    if (m.poster) return m.poster;
-    if (m.posterRemote) return `/api/cover?src=${encodeURIComponent(m.posterRemote)}`;
-    return '';
-  }
+    /**
+     * 缩略图用小图：
+     * - TMDb 图床：/w500/ → /w200/
+     * - 豆瓣图床：/view/subject/l/ → /view/subject/s/（还有 /m/、/photo/l/ 等）
+     * 传 size（如 'w200'）时才缩，不传保持原样。
+     */
+    function tmdbSize(url, size) {
+      if (!url || !size) return url || '';
+      let u = String(url);
+      if (/doubanio\.com/.test(u)) {
+        // 只对"缩略图"场景生效：请求尺寸以 w 开头（我们用它表示小图）
+        if (/^w(1|2)\d\d$/.test(String(size))) {
+          u = u.replace(/\/view\/subject\/[lms]\//, '/view/subject/s/');
+          u = u.replace(/\/view\/photo\/[lms]\//, '/view/photo/s/');
+          u = u.replace(/\/view\/celebrity\/[lms]\//, '/view/celebrity/s/');
+          u = u.replace(/\/(l|m)\/public\//, '/s/public/');
+        }
+        return u;
+      }
+      return u.replace(/\/(w\d+|original)\//, `/${size}/`);
+    }
+
+    function posterSrc(m, size) {
+      if (!m) return '';
+      if (m.poster) return m.poster;
+      if (m.posterRemote) {
+        const u = tmdbSize(m.posterRemote, size);
+        return `/api/cover?src=${encodeURIComponent(u)}`;
+      }
+      return '';
+    }
 
   function movieById(id) {
     return state.movies.find((m) => m.id === id) || null;
@@ -4290,8 +4316,8 @@ function openListPicker(listId) {
     return list;
   }
 
-  function movieCardHtml(m) {
-    const p = posterSrc(m);
+  function movieCardHtml(m, imgSize) {
+    const p = posterSrc(m, imgSize);
     const st = movieStatusOf(m);
     return `<button class="movie-card" data-movie="${esc(m.id)}">
       <div class="poster">
@@ -4454,7 +4480,25 @@ function openListPicker(listId) {
       view.innerHTML = summary + html;
       return;
     }
-    view.innerHTML = `${summary}<div class="movie-grid">${list.map(movieCardHtml).join('')}</div>`;
+    const limit = Math.max(20, state.shelfLimit || 60);
+    const shown = list.slice(0, limit);
+    view.innerHTML = `${summary}<div class="movie-grid">${shown.map((m) => movieCardHtml(m, 'w200')).join('')}</div>${
+      list.length > shown.length
+        ? `<div id="shelfMore" style="text-align:center;padding:16px;color:var(--text-mute);font-size:12.5px">
+             已显示 ${shown.length} / ${list.length} 部，滚动到底自动加载…</div>`
+        : ''
+    }`;
+    const more = $('#shelfMore');
+    if (more) {
+      const io = new IntersectionObserver((ents) => {
+        if (ents.some((x) => x.isIntersecting)) {
+          io.disconnect();
+          state.shelfLimit = (state.shelfLimit || 60) + 60;
+          renderMovieShelf();
+        }
+      });
+      io.observe(more);
+    }
   }
 
   function renderMovieTabLabel() {
