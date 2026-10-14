@@ -831,7 +831,7 @@ async function handleApi(req, res, url) {
       if (!b.doubanPending || !b.sourceId) continue;
       items.push({
         kind: 'book', id: b.id, title: b.title, subtitle: (b.authors || []).join(' / '),
-        cover: b.cover || b.coverRemote || '', status: b.status, statusLabel: (store.BOOK_STATUSES[b.status] || {}).label || b.status,
+        cover: b.cover || b.coverRemote || '', status: b.status, statusLabel: ((store.STATUSES || {})[b.status] || {}).label || b.status,
         myRating: b.myRating || 0, at: b.doubanPending,
         url: b.sourceUrl || `https://book.douban.com/subject/${b.sourceId}/`,
       });
@@ -840,7 +840,7 @@ async function handleApi(req, res, url) {
       if (!m.doubanPending || !m.sourceId) continue;
       items.push({
         kind: 'movie', id: m.id, title: m.title, subtitle: [m.year, m.type === 'tv' ? '剧集' : '电影'].filter(Boolean).join(' · '),
-        cover: m.poster || m.posterRemote || '', status: m.status, statusLabel: (store.MOVIE_STATUSES[m.status] || {}).label || m.status,
+        cover: m.poster || m.posterRemote || '', status: m.status, statusLabel: ((store.MOVIE_STATUSES || {})[m.status] || {}).label || m.status,
         myRating: m.myRating || 0, at: m.doubanPending,
         url: m.sourceUrl || `https://movie.douban.com/subject/${m.sourceId}/`,
       });
