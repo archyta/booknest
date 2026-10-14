@@ -3669,9 +3669,9 @@ function openListPicker(listId) {
           } catch (err) {
             /* 忽略 */
           }
-          const label0 = action.textContent;
-          action.disabled = true;
-          action.textContent = '同步中…';
+          const label0 = el.textContent;
+          el.disabled = true;
+          el.textContent = '同步中…';
           if (box) box.textContent = `正在读取豆瓣${kind === 'book' ? '读书' : '影视'}记录（分页抓取，请稍候）…`;
           try {
             const res = await api('/api/douban/sync', { method: 'POST', body: { kind, updateExisting: update } });
@@ -3695,8 +3695,8 @@ function openListPicker(listId) {
             if (box) box.textContent = `同步失败：${err.message}`;
             toast(`同步失败：${err.message}`, 'err');
           } finally {
-            action.disabled = false;
-            action.textContent = label0;
+            el.disabled = false;
+            el.textContent = label0;
           }
         } else if (action === 'open-manage') {
           renderManage();
