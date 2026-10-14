@@ -171,8 +171,9 @@ async function fetchStatus({ cookie, uid, kind, status, budget, known }) {
 }
 
 /** 拉某类（book/movie）的全部收藏状态 */
-async function fetchAll({ cookie, uid, kind, known, maxPerStatus }) {
-  const statuses = STATUS_KEYS[kind];
+async function fetchAll({ cookie, uid, kind, known, maxPerStatus, only }) {
+  // only：只要这些豆瓣状态（collect/doing/done），不传则全部
+  const statuses = Array.isArray(only) && only.length ? STATUS_KEYS[kind].filter((x) => only.includes(x)) : STATUS_KEYS[kind];
   const perStatus = Number(maxPerStatus) > 0 ? Number(maxPerStatus) : MAX_PER_STATUS;
   const items = [];
   const summary = {};

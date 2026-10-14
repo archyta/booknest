@@ -2206,26 +2206,45 @@ function openListPicker(listId) {
         </div>
       </div>
       <div class="section">
-        <div class="section-head"><h3>豆瓣同步</h3></div>
+        <div class="section-head"><h3>豆瓣同步（拉取）</h3></div>
         <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-bottom:8px">
-          用上面填的豆瓣 Cookie，把你豆瓣上的<b>想读 / 在读 / 读过</b>和<b>想看 / 在看 / 看过</b>同步进来。
-          按豆瓣条目 id 或片名去重，<b>只新增、不动你已有的记录</b>；勾选下面的选项才会更新已有条目的状态。
-          封面先用豆瓣图床地址（经本机代理显示），不占用磁盘。
+          用上面填的豆瓣 Cookie 把收藏同步进来。按豆瓣条目 id 或片名去重、<b>只新增</b>（勾下面才会更新已有状态）。
+          影片会解析出<b>类型/国家/导演/主演</b>，书籍自动套用关键词分类。
+          <br><b>预览</b>只统计不写入；<b>自动分批</b>反复同步直到没有新条目（适合清空长列表）。
         </div>
-        <label class="row" style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);margin-bottom:8px">
+        <label class="row" style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);margin-bottom:10px">
           <input type="checkbox" id="syncUpdateExisting" ${state.settings.syncUpdateExisting ? 'checked' : ''}>
           同时更新已有条目的状态
         </label>
-        <div class="btn-row">
-          <button class="btn ghost sm" data-action="douban-sync-book" ${state.settings.doubanCookieSet ? '' : 'disabled'}>同步豆瓣读书</button>
-          <button class="btn ghost sm" data-action="douban-sync-movie" ${state.settings.doubanCookieSet ? '' : 'disabled'}>同步豆瓣影视</button>
-        </div>
-        ${
-          state.settings.doubanCookieSet
-            ? ''
-            : '<div class="hint" style="font-size:11.5px;color:#f59e0b;margin-top:6px">需要先在上面填写「豆瓣 Cookie」才能同步</div>'
-        }
-        <div id="doubanSyncResult" style="font-size:12px;color:var(--text-mute);margin-top:8px"></div>
+        ${['book', 'movie']
+          .map((kind) => {
+            const defs =
+              kind === 'book'
+                ? [['collect', '想读'], ['doing', '在读'], ['done', '读过']]
+                : [['collect', '想看'], ['doing', '在看'], ['done', '看过']];
+            const dis = state.settings.doubanCookieSet ? '' : 'disabled';
+            return `<div style="margin-bottom:12px;padding:10px;border:1px solid var(--line);border-radius:12px">
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px">${kind === 'book' ? '📚 豆瓣读书' : '🎬 豆瓣影视'}</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+                ${defs
+                  .map(
+                    ([key, label]) =>
+                      `<label class="pill" style="display:flex;align-items:center;gap:5px;cursor:pointer">
+                         <input type="checkbox" data-sync-status="${kind}|${key}" checked> ${label}</label>`
+                  )
+                  .join('')}
+              </div>
+              <div class="btn-row">
+                <button class="btn ghost sm" data-action="douban-preview" data-kind="${kind}" ${dis}>预览（不写入）</button>
+                <button class="btn ghost sm" data-action="douban-sync-pick" data-kind="${kind}" ${dis}>同步选中</button>
+                <button class="btn ghost sm" data-action="douban-sync-auto" data-kind="${kind}" ${dis}>自动分批同步</button>
+              </div>
+              <div id="syncBox-${kind}" style="font-size:12px;color:var(--text-mute);margin-top:8px">${
+              state.settings.doubanCookieSet ? '' : '需要先填写豆瓣 Cookie'
+            }</div>
+            </div>`;
+          })
+          .join('')}
       </div>
       <div class="section">
         <div class="section-head"><h3>同步到豆瓣（推送）</h3></div>
@@ -3769,41 +3788,74 @@ function openListPicker(listId) {
           await loadDoubanPending();
           renderSettings();
           toast(`已标记 ${res.cleared} 条为已同步`);
-        } else if (action === 'douban-sync-book' || action === 'douban-sync-movie') {
-          const kind = action === 'douban-sync-book' ? 'book' : 'movie';
-          const box = $('#doubanSyncResult');
+        } else if (action === 'douban-preview' || action === 'douban-sync-pick' || action === 'douban-sync-auto') {
+          const kind = el.dataset.kind === 'book' ? 'book' : 'movie';
+          const statuses = $$(`[data-sync-status^="${kind}|"]`)
+            .filter((c) => c.checked)
+            .map((c) => c.dataset.syncStatus.split('|')[1]);
+          if (!statuses.length) return toast('至少勾选一个状态', 'err');
+          const box = $(`#syncBox-${kind}`);
           const update = !!($('#syncUpdateExisting') || {}).checked;
-          try {
-            await api('/api/settings', { method: 'PATCH', body: { syncUpdateExisting: update } });
-            state.settings.syncUpdateExisting = update;
-          } catch (err) {
-            /* 忽略 */
-          }
+          await api('/api/settings', { method: 'PATCH', body: { syncUpdateExisting: update } }).catch(() => {});
+          state.settings.syncUpdateExisting = update;
           const label0 = el.textContent;
           el.disabled = true;
-          el.textContent = '同步中…';
-          if (box) box.textContent = `正在读取豆瓣${kind === 'book' ? '读书' : '影视'}记录（分页抓取，请稍候）…`;
+          el.textContent = '处理中…';
+          const render = (res) => {
+            if (!box) return;
+            const rows = Object.entries(res.byStatus || {}).map(
+              ([name, v]) =>
+                `${name}：豆瓣侧 ${v.total} · 本次抓取 ${v['抓取']}${
+                  v['略过已入库'] ? ` · 已入库略过 ${v['略过已入库']}` : ''
+                }${v['键名无效'] ? ' · ⚠️ 键名无效' : ''}`
+            );
+            box.innerHTML = rows.length ? rows.join('<br>') : '（没有匹配的状态）';
+          };
           try {
-            const res = await api('/api/douban/sync', { method: 'POST', body: { kind, updateExisting: update } });
-            const parts = [
-              `豆瓣侧：${Object.entries(res.summary || {})
-                .map(([k, v]) => `${k} ${v}`)
-                .join(' / ')}`,
-              `本次读取 ${res.fetched || 0} 条新记录${res.capped ? '（达到单次上限）' : ''}`,
-              res.skippedKnown ? `扫描中略过已入库 ${res.skippedKnown} 条` : '',
-              `新增 ${res.added || 0}`,
-              `更新 ${res.updated || 0}`,
-              `已存在跳过 ${res.skipped || 0}`,
-            ];
-            if (res.failed) parts.push(`失败 ${res.failed}`);
-            const msg = res.message || parts.join(' · ');
-            if (box) box.textContent = msg;
-            toast(res.message ? '没有读到记录' : `同步完成：新增 ${res.added}，更新 ${res.updated}`, res.message ? 'err' : undefined);
-            await refresh();
-            renderSettings();
+            if (action === 'douban-preview') {
+              const res = await api('/api/douban/sync', { method: 'POST', body: { kind, dryRun: true, statuses, perStatus: 200 } });
+              render(res);
+              if (box)
+                box.innerHTML += `<div style="margin-top:6px">👉 本次会新增 <b style="color:var(--brand)">${
+                  res.wouldAdd || 0
+                }</b> 条（扫描 ${res.scanned || 0}，略过已入库 ${res.skippedKnown || 0}）${
+                  res.message ? `<br>${res.message}` : ''
+                }</div>`;
+              toast(`预览：会新增 ${res.wouldAdd || 0} 条`);
+            } else if (action === 'douban-sync-pick') {
+              const res = await api('/api/douban/sync', { method: 'POST', body: { kind, statuses, updateExisting: update, perStatus: 200 } });
+              render(res);
+              if (box)
+                box.innerHTML += `<div style="margin-top:6px">新增 ${res.added || 0} · 更新 ${res.updated || 0} · 已存在跳过 ${
+                  res.skipped || 0
+                }${res.message ? ` · ${res.message}` : ''}</div>`;
+              toast(`同步完成：新增 ${res.added || 0}`);
+              await refresh();
+            } else {
+              let added = 0;
+              let updated = 0;
+              let round = 0;
+              for (; round < 8; round += 1) {
+                if (box) box.innerHTML = `自动分批：第 ${round + 1} 批进行中…（已新增 ${added}）`;
+                const res = await api('/api/douban/sync', {
+                  method: 'POST',
+                  body: { kind, statuses, updateExisting: update, perStatus: 100 },
+                });
+                added += res.added || 0;
+                updated += res.updated || 0;
+                render(res);
+                if (box) box.innerHTML += `<div style="margin-top:6px">第 ${round + 1} 批：新增 ${res.added || 0}（累计 ${added}）</div>`;
+                if (res.message || !res.fetched) break;
+                await refresh();
+              }
+              if (box)
+                box.innerHTML += `<div style="margin-top:6px"><b>自动分批结束</b>：共 ${round + 1} 批 · 新增 ${added} · 更新 ${updated}</div>`;
+              toast(`自动分批完成：新增 ${added}`);
+              await refresh();
+            }
           } catch (err) {
-            if (box) box.textContent = `同步失败：${err.message}`;
-            toast(`同步失败：${err.message}`, 'err');
+            if (box) box.textContent = `失败：${err.message}`;
+            toast(`失败：${err.message}`, 'err');
           } finally {
             el.disabled = false;
             el.textContent = label0;

@@ -904,6 +904,8 @@ async function handleApi(req, res, url) {
     if (!uid) return sendJson(res, 400, { error: 'Cookie 里没找到 dbcl2，请把浏览器里的整条 Cookie 复制过来' });
     const kind = body.kind === 'book' ? 'book' : 'movie';
     const dryRun = body.dryRun === true; // 预览：只统计，不写库
+    const only = Array.isArray(body.statuses) && body.statuses.length ? body.statuses : null; // 只同步选中的状态
+    const perStatus = Number(body.perStatus) > 0 ? Number(body.perStatus) : undefined; // 每个状态每批最多抓多少
     const norm0 = (s2) => String(s2 || '').toLowerCase().replace(/[\s\-_:：·,，.。()（）\[\]【】《》]/g, '');
     // 已入库的判断给到抓取层：长的收藏列表可以边翻页边跳过，多次同步能逐步推进
     const known = (item) =>
@@ -919,7 +921,7 @@ async function handleApi(req, res, url) {
           );
     let data;
     try {
-      data = await doubanUser.fetchAll({ cookie, uid, kind, known });
+      data = await doubanUser.fetchAll({ cookie, uid, kind, known, only, maxPerStatus: perStatus });
     } catch (err) {
       return sendJson(res, 502, { error: err.message || '豆瓣接口请求失败' });
     }
