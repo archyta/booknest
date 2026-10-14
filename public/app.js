@@ -48,6 +48,7 @@
     movieSources: [],
     movieCollection: null,
     person: null,
+    doubanPending: [],
     seriesPick: null,
     movieListPick: null,
     movieCurrentListId: '',
@@ -2094,6 +2095,7 @@ function openListPicker(listId) {
   /* ---------------- 设置 ---------------- */
 
   function renderSettings() {
+    setTimeout(loadDoubanPending, 0);
     const srv = state.server || {};
     const px = srv.proxy || {};
     const storedProxyUrl = (px.stored && px.stored.url) || '';
@@ -2211,6 +2213,20 @@ function openListPicker(listId) {
             : '<div class="hint" style="font-size:11.5px;color:#f59e0b;margin-top:6px">需要先在上面填写「豆瓣 Cookie」才能同步</div>'
         }
         <div id="doubanSyncResult" style="font-size:12px;color:var(--text-mute);margin-top:8px"></div>
+      </div>
+      <div class="section">
+        <div class="section-head"><h3>同步到豆瓣（推送）</h3></div>
+        <div class="hint" style="font-size:11.5px;color:var(--text-mute);margin-bottom:8px">
+          豆瓣的<b>写入</b>接口需要 App 鉴权（实测 m.douban.com 返回「请先登录」、frodo 返回 invalid_apikey），
+          本工具无法直接替你写入。改为<b>待推送清单</b>：本地改过状态/我的评分/备注的豆瓣条目会自动进队列，
+          点「打开豆瓣」用你自己的登录状态标记，回来点「已同步」清掉。
+        </div>
+        <div id="doubanPendingBox" style="font-size:12.5px;margin-bottom:8px">读取中…</div>
+        <div class="btn-row">
+          <button class="btn ghost sm" data-action="douban-pending-open">查看待推送清单</button>
+          <button class="btn ghost sm" data-action="douban-pending-copy">复制清单</button>
+          <button class="btn ghost sm" data-action="douban-pending-clear-all">全部标记已同步</button>
+        </div>
       </div>
       <div class="section">
         <div class="section-head"><h3>影片数据源</h3><button class="btn sm ghost" data-action="check-movie-providers">重新检测</button></div>
@@ -2851,6 +2867,34 @@ function openListPicker(listId) {
         drawSeriesPicker();
       } else if (act.dataset.act === 'spick-save') {
         await applySeriesPick();
+      }
+    });
+
+    $('#pushBody').addEventListener('click', async (e) => {
+      const one = e.target.closest('[data-pushed]');
+      if (one) {
+        const [kind, id] = one.dataset.pushed.split('|');
+        await api('/api/douban/pending/clear', { method: 'POST', body: { items: [{ kind, id }] } });
+        await loadDoubanPending();
+        renderPushSheet();
+        toast('已标记为已同步');
+        return;
+      }
+      const act = e.target.closest('[data-push]');
+      if (!act) return;
+      if (act.dataset.push === 'all') {
+        const res = await api('/api/douban/pending/clear', { method: 'POST', body: { all: true } });
+        await loadDoubanPending();
+        renderPushSheet();
+        toast(`已标记 ${res.cleared} 条为已同步`);
+      } else {
+        const text = pushCopyText();
+        try {
+          await navigator.clipboard.writeText(text);
+          toast('已复制清单');
+        } catch (err) {
+          window.prompt('复制下面的清单：', text);
+        }
       }
     });
 
@@ -3659,7 +3703,26 @@ function openListPicker(listId) {
       if (!el) return;
       const action = el.dataset.action;
       try {
-        if (action === 'douban-sync-book' || action === 'douban-sync-movie') {
+        if (action === 'douban-pending-open') {
+          await loadDoubanPending();
+          renderPushSheet();
+          openSheet('#sheetPush');
+        } else if (action === 'douban-pending-copy') {
+          await loadDoubanPending();
+          const text = pushCopyText();
+          if (!text) return toast('没有待推送的条目');
+          try {
+            await navigator.clipboard.writeText(text);
+            toast(`已复制 ${state.doubanPending.length} 条清单`);
+          } catch (err) {
+            window.prompt('复制下面的清单：', text);
+          }
+        } else if (action === 'douban-pending-clear-all') {
+          const res = await api('/api/douban/pending/clear', { method: 'POST', body: { all: true } });
+          await loadDoubanPending();
+          renderSettings();
+          toast(`已标记 ${res.cleared} 条为已同步`);
+        } else if (action === 'douban-sync-book' || action === 'douban-sync-movie') {
           const kind = action === 'douban-sync-book' ? 'book' : 'movie';
           const box = $('#doubanSyncResult');
           const update = !!($('#syncUpdateExisting') || {}).checked;
@@ -4713,6 +4776,65 @@ function openListPicker(listId) {
       const h = $('#seasonRefreshHint');
       if (h) h.textContent = '';
     }
+  }
+
+  async function loadDoubanPending() {
+    try {
+      const res = await api('/api/douban/pending');
+      state.doubanPending = res.items || [];
+    } catch (err) {
+      state.doubanPending = [];
+    }
+    const box = $('#doubanPendingBox');
+    if (box) {
+      const n = (state.doubanPending || []).length;
+      box.innerHTML = n
+        ? `待推送 <b style="color:var(--brand)">${n}</b> 条（豆瓣来源，且本地状态/评分/备注有改动）`
+        : '暂无待推送条目 —— 本地改过豆瓣来源的条目后会自动出现在这里';
+    }
+    if ($('#sheetPush') && $('#sheetPush').classList.contains('open')) renderPushSheet();
+    return state.doubanPending;
+  }
+
+  function pushCopyText() {
+    return (state.doubanPending || [])
+      .map((i) => `${i.kind === 'book' ? '书' : '影'} ${i.title}${i.subtitle ? '（' + i.subtitle + '）' : ''} → ${i.statusLabel}${
+        i.myRating ? ' ' + i.myRating + '星' : ''
+      } ${i.url}`)
+      .join('\n');
+  }
+
+  function renderPushSheet() {
+    const list = state.doubanPending || [];
+    const body = $('#pushBody');
+    if (!body) return;
+    body.innerHTML = list.length
+      ? `${list
+          .map(
+            (i) => `<div class="person-work" style="align-items:center">
+              <div class="poster">${
+                i.cover
+                  ? `<img loading="lazy" src="${esc(
+                      /^https?:/.test(i.cover) ? `/api/cover?src=${encodeURIComponent(i.cover)}` : i.cover
+                    )}" alt="">`
+                  : i.kind === 'book'
+                  ? '📖'
+                  : '🎬'
+              }</div>
+              <div class="info">
+                <div class="t">${esc(i.title)}</div>
+                <div class="s">${esc([i.subtitle, i.statusLabel, i.myRating ? `${i.myRating} 星` : ''].filter(Boolean).join(' · '))}</div>
+              </div>
+              <a class="badge" href="${esc(i.url)}" target="_blank" rel="noopener" style="text-decoration:none">打开豆瓣 ↗</a>
+              <button class="badge" data-pushed="${esc(i.kind)}|${esc(i.id)}" style="margin-left:6px;cursor:pointer">已同步</button>
+            </div>`
+          )
+          .join('')}
+        <div class="sticky-bar">
+          <button class="btn ghost" data-push="copy">复制清单</button>
+          <button class="btn" data-push="all">全部标记已同步</button>
+        </div>`
+      : '<div class="center">没有待推送的条目</div>';
   }
 
   /** 把某个影片归入手动系列（name 为空则先问名字） */

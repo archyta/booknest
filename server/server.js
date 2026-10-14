@@ -489,7 +489,9 @@ async function handleApi(req, res, url) {
     if (req.method === 'PATCH' || req.method === 'PUT') {
       const body = await readBody(req);
       try {
+        const beforeBook = store.getBook(id) || {};
         const book = store.updateBook(id, body);
+        markDoubanPending('book', beforeBook, book);
         return sendJson(res, 200, { book });
       } catch (err) {
         return sendJson(res, 404, { error: err.message });
@@ -805,6 +807,64 @@ async function handleApi(req, res, url) {
     return sendJson(res, 201, { movie: saved });
   }
 
+  /** 本地改动 → 记入"待推送豆瓣"队列（豆瓣写接口需要 App 鉴权，无法直接推送） */
+  const markDoubanPending = (kind, before, after) => {
+    if (!before || !after) return;
+    if (after.source !== 'douban' || !after.sourceId) return;
+    const changed =
+      before.status !== after.status ||
+      Number(before.myRating || 0) !== Number(after.myRating || 0) ||
+      String(before.note || '') !== String(after.note || '');
+    if (!changed) return;
+    const patch = { doubanPending: nowIso() };
+    if (kind === 'book') store.updateBook(after.id, patch);
+    else store.updateMovie(after.id, patch);
+    after.doubanPending = patch.doubanPending;
+  };
+
+  /** 待推送到豆瓣的清单 */
+  if (p === '/api/douban/pending' && req.method === 'GET') {
+    const items = [];
+    for (const b of store.listBooks()) {
+      if (!b.doubanPending || !b.sourceId) continue;
+      items.push({
+        kind: 'book', id: b.id, title: b.title, subtitle: (b.authors || []).join(' / '),
+        cover: b.cover || b.coverRemote || '', status: b.status, statusLabel: (store.BOOK_STATUSES[b.status] || {}).label || b.status,
+        myRating: b.myRating || 0, at: b.doubanPending,
+        url: b.sourceUrl || `https://book.douban.com/subject/${b.sourceId}/`,
+      });
+    }
+    for (const m of store.listMovies()) {
+      if (!m.doubanPending || !m.sourceId) continue;
+      items.push({
+        kind: 'movie', id: m.id, title: m.title, subtitle: [m.year, m.type === 'tv' ? '剧集' : '电影'].filter(Boolean).join(' · '),
+        cover: m.poster || m.posterRemote || '', status: m.status, statusLabel: (store.MOVIE_STATUSES[m.status] || {}).label || m.status,
+        myRating: m.myRating || 0, at: m.doubanPending,
+        url: m.sourceUrl || `https://movie.douban.com/subject/${m.sourceId}/`,
+      });
+    }
+    items.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    return sendJson(res, 200, { items, count: items.length });
+  }
+
+  /** 标记"已同步到豆瓣"（清出队列）；{all:true} 清空 */
+  if (p === '/api/douban/pending/clear' && req.method === 'POST') {
+    const body = await readBody(req);
+    let n = 0;
+    const clearOne = (list, update) => {
+      for (const x of list) {
+        const hit = body.all || (Array.isArray(body.items) && body.items.some((i) => i.id === x.id));
+        if (hit && x.doubanPending) {
+          update(x.id, { doubanPending: '', doubanPushedAt: nowIso() });
+          n += 1;
+        }
+      }
+    };
+    clearOne(store.listBooks(), (id, patch) => store.updateBook(id, patch));
+    clearOne(store.listMovies(), (id, patch) => store.updateMovie(id, patch));
+    return sendJson(res, 200, { ok: true, cleared: n });
+  }
+
   const movieMatch = p.match(/^\/api\/movies\/([^/]+)$/);
   if (movieMatch) {
     const id = decodeId(movieMatch[1]);
@@ -815,7 +875,10 @@ async function handleApi(req, res, url) {
     if (req.method === 'PATCH' || req.method === 'PUT') {
       const body = await readBody(req);
       try {
+        const beforeMovie = store.getMovie(id) || {};
         let updated = store.updateMovie(id, body);
+        markDoubanPending('movie', beforeMovie, updated);
+        updated = store.getMovie(id) || updated;
         if (updated.posterRemote && !updated.poster) {
           const local = await store.localizeCover(updated.posterRemote, updated.id);
           if (local) updated = store.updateMovie(updated.id, { poster: local });
