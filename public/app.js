@@ -4926,6 +4926,31 @@ function openListPicker(listId) {
   }
 
   /**
+  /** 详情页打开时自动补合集（TMDb）：没查过且没有合集的影片才查，一次一个请求 */
+  async function ensureMovieCollectionInfo(force) {
+    const d = state.movieDraft;
+    if (!d || d.isNew) return;
+    const m = d.movie;
+    if (m.type === 'tv') return;
+    if (!force && ((m.collection || {}).id || m.collectionCheckedAt)) return;
+    state.movieCollectionTried = state.movieCollectionTried || {};
+    if (!force && state.movieCollectionTried[m.id]) return;
+    state.movieCollectionTried[m.id] = true;
+    try {
+      const res = await api(`/api/movies/${encodeURIComponent(m.id)}/collection-refresh`, { method: 'POST' });
+      if (res.movie && state.movieDraft && state.movieDraft.movie.id === m.id) {
+        state.movieDraft.movie = res.movie;
+        const idx = state.movies.findIndex((x) => x.id === m.id);
+        if (idx >= 0) state.movies[idx] = res.movie;
+        renderMovieSheet();
+        if (res.found) toast(`已自动识别合集：${(res.movie.collection || {}).name}`);
+      }
+    } catch (err) {
+      /* 静默失败，不影响详情页 */
+    }
+  }
+
+
    * 刷新剧集的季信息。
    * 进详情时自动刷一次（同一条记录 1 小时内不重复刷，避免来回进出时反复请求），
    * 也可以点「↻ 刷新季」强制刷。
@@ -5799,23 +5824,7 @@ function openListPicker(listId) {
       <div class="hint" style="font-size:12px;color:var(--text-mute);margin-bottom:8px">
         已选 <b id="movieListPickCount">${lp.selected.size}</b> 部 · 共 ${sorted.length} 部可选；取消勾选即从片单移出
       </div>
-      <div style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:12px">
-        ${
-          sorted.length
-            ? sorted
-                .map(
-                  (m) => `<label class="movie-pick-item">
-                    <input type="checkbox" data-mpick-id="${esc(m.id)}" ${lp.selected.has(m.id) ? 'checked' : ''}>
-                    <div class="poster">${posterSrc(m) ? `<img loading="lazy" src="${esc(posterSrc(m))}" alt="">` : '🎬'}</div>
-                    <div class="info"><div class="t">${esc(m.title)}</div><div class="s">${esc(
-                    [m.year, (m.directors || [])[0], inList.has(m.id) ? '已在片单' : ''].filter(Boolean).join(' · ')
-                  )}</div></div>
-                  </label>`
-                )
-                .join('')
-            : '<div class="center">没有匹配的影片</div>'
-        }
-      </div>
+      <div id="movieListPickRows" style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:12px"></div>
       <div class="sticky-bar">
         <button class="btn ghost" data-act="mpick-all">全选</button>
         <button class="btn ghost" data-act="mpick-none">清空</button>
